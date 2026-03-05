@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { 
+import {
   Users, 
   CheckCircle2, 
   HelpCircle, 
   XCircle,
   Database,
-  Download
+  Download,
+  Table2
 } from 'lucide-react';
 import api from '../services/api';
 import { useAuth } from '../store/useAuth';
@@ -94,14 +95,22 @@ export default function Dashboard() {
           <p className="text-slate-600">أهلاً بك، {user?.name}</p>
         </div>
         
-        {user?.role === 'SALES' && (
-          <button 
+        {user?.role !== 'ADMIN' ? (
+          <button
             onClick={claimLead}
             disabled={claiming}
             className="btn-primary flex items-center gap-2 animate-pulse hover:animate-none"
           >
             <Download size={20} />
             <span>سحب عميل جديد</span>
+          </button>
+        ) : (
+          <button
+            onClick={() => navigate('/admin/pooled-numbers')}
+            className="btn-secondary flex items-center gap-2"
+          >
+            <Table2 size={18} />
+            <span>عرض الداتا المجمعة</span>
           </button>
         )}
       </div>

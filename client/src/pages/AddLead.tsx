@@ -41,6 +41,17 @@ interface ClaimedLeadPayload {
   gender?: 'MALE' | 'FEMALE' | 'UNKNOWN';
 }
 
+interface RecontactLeadPayload {
+  id: number;
+  name: string;
+  phone: string;
+  whatsappPhone?: string;
+  notes?: string;
+  status?: 'NO_ANSWER' | 'RECONTACT' | 'NEW' | 'AGREED' | 'HESITANT' | 'REJECTED' | 'SPONSOR';
+  source?: 'CALL' | 'SEND';
+  gender?: 'MALE' | 'FEMALE' | 'UNKNOWN';
+}
+
 export default function AddLead() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -49,6 +60,7 @@ export default function AddLead() {
   const [submitting, setSubmitting] = useState(false);
   const [claimLoading, setClaimLoading] = useState(false);
   const [claimedLeadId, setClaimedLeadId] = useState<number | null>(null);
+  const [recontactLeadId, setRecontactLeadId] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [templates, setTemplates] = useState<StatusTemplate[]>([]);
   const [messageDraft, setMessageDraft] = useState('');
@@ -74,18 +86,36 @@ export default function AddLead() {
       }
 
       const claimId = Number(searchParams.get('claimId') || 0);
+      const recontactId = Number(searchParams.get('recontactId') || 0);
       const claimedFromState = (location.state as { claimedLead?: ClaimedLeadPayload } | null)?.claimedLead;
+      const recontactFromState = (location.state as { recontactLead?: RecontactLeadPayload } | null)?.recontactLead;
       const applyClaimedLead = (lead: ClaimedLeadPayload) => {
         if (!lead?.id) return;
         setClaimedLeadId(lead.id);
+        setRecontactLeadId(null);
         setValue('name', lead.name || '');
         setValue('phone', lead.phone || '');
         setValue('whatsappPhone', lead.whatsappPhone || '');
         setValue('gender', lead.gender || 'UNKNOWN');
       };
+      const applyRecontactLead = (lead: RecontactLeadPayload) => {
+        if (!lead?.id) return;
+        setRecontactLeadId(lead.id);
+        setClaimedLeadId(null);
+        setValue('name', lead.name || '');
+        setValue('phone', lead.phone || '');
+        setValue('whatsappPhone', lead.whatsappPhone || '');
+        setValue('gender', lead.gender || 'UNKNOWN');
+        setValue('notes', lead.notes || '');
+        setValue('status', lead.status === 'RECONTACT' ? 'NO_ANSWER' : ((lead.status as LeadForm['status']) || 'NO_ANSWER'));
+      };
 
       if (claimedFromState?.id && (!claimId || claimId === claimedFromState.id)) {
         applyClaimedLead(claimedFromState);
+        return;
+      }
+      if (recontactFromState?.id && (!recontactId || recontactId === recontactFromState.id)) {
+        applyRecontactLead(recontactFromState);
         return;
       }
 
@@ -96,6 +126,18 @@ export default function AddLead() {
           applyClaimedLead(leadRes.data);
         } catch (claimError: any) {
           setError(claimError?.response?.data?.error || 'تعذر تحميل بيانات العميل المسحوب');
+        } finally {
+          setClaimLoading(false);
+        }
+      }
+
+      if (recontactId > 0) {
+        setClaimLoading(true);
+        try {
+          const leadRes = await api.get(`/leads/${recontactId}`);
+          applyRecontactLead(leadRes.data);
+        } catch (recontactError: any) {
+          setError(recontactError?.response?.data?.error || 'تعذر تحميل بيانات عميل إعادة التواصل');
         } finally {
           setClaimLoading(false);
         }
@@ -125,6 +167,8 @@ export default function AddLead() {
     try {
       if (claimedLeadId) {
         await api.post(`/leads/${claimedLeadId}/finalize-claim`, { ...data, source: 'CALL' });
+      } else if (recontactLeadId) {
+        await api.put(`/leads/${recontactLeadId}`, { ...data, source: 'CALL', logCall: true });
       } else {
         await api.post('/leads', { ...data, source: 'CALL' });
       }
@@ -152,7 +196,11 @@ export default function AddLead() {
       if (claimedLeadId && data.status === 'NEW') {
         navigate('/');
       } else {
-        navigate('/leads');
+        if (recontactLeadId) {
+          navigate(data.status === 'NO_ANSWER' ? '/leads/no-answer' : '/leads');
+        } else {
+          navigate('/leads');
+        }
       }
     } catch (err: any) {
       waWindow?.close();
@@ -192,7 +240,11 @@ export default function AddLead() {
       <div>
         <h2 className="text-3xl font-bold text-slate-800 mb-2">إضافة عميل جديد</h2>
         <p className="text-slate-600">
-          {claimedLeadId ? 'تم سحب عميل من المجمع. أكمل حالته الآن.' : 'قم بإدخال بيانات العميل الجديد'}
+          {claimedLeadId
+            ? 'تم سحب عميل من المجمع. أكمل حالته الآن.'
+            : recontactLeadId
+              ? 'إعادة تواصل مع عميل من قائمة مردوش.'
+              : 'قم بإدخال بيانات العميل الجديد'}
         </p>
       </div>
 
@@ -203,6 +255,12 @@ export default function AddLead() {
       {claimedLeadId && !claimLoading && (
         <div className="glass-card p-4 border border-purple-100 bg-purple-50/70 text-purple-900 text-sm">
           هذا عميل مسحوب من المجمع. عند الحفظ بالحالة "جديد" سيتم إرجاعه تلقائياً إلى المجمع.
+        </div>
+      )}
+
+      {recontactLeadId && !claimLoading && (
+        <div className="glass-card p-4 border border-indigo-100 bg-indigo-50/70 text-indigo-900 text-sm">
+          هذا عميل من قائمة "مردوش". إذا بقيت الحالة "مردش" سيظل في القائمة، وإذا غيّرت الحالة سينتقل لقائمة العملاء حسب النتيجة الجديدة.
         </div>
       )}
 

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Search, Phone, MessageCircle, Edit, Trash2, CalendarClock, X, Check } from 'lucide-react';
+import { Search, Phone, MessageCircle, Edit, Trash2, RefreshCcw } from 'lucide-react';
 import api from '../services/api';
 import EditLeadModal from '../components/EditLeadModal';
 import { toWhatsAppNumber } from '../utils/whatsapp';
 import { useAuth } from '../store/useAuth';
+import { useNavigate } from 'react-router-dom';
 
 interface Lead {
   id: number;
@@ -19,14 +20,12 @@ interface Lead {
 
 export default function NoAnswerLeads() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [deletingLeadId, setDeletingLeadId] = useState<number | null>(null);
-  const [schedulingLead, setSchedulingLead] = useState<Lead | null>(null);
-  const [nextContactAt, setNextContactAt] = useState('');
-  const [savingSchedule, setSavingSchedule] = useState(false);
 
   const fetchLeads = async () => {
     try {
@@ -76,28 +75,8 @@ export default function NoAnswerLeads() {
     }
   };
 
-  const openSchedule = (lead: Lead) => {
-    setSchedulingLead(lead);
-    const date = new Date();
-    date.setDate(date.getDate() + 1);
-    date.setHours(11, 0, 0, 0);
-    setNextContactAt(date.toISOString().slice(0, 16));
-  };
-
-  const scheduleRecontact = async () => {
-    if (!schedulingLead || !nextContactAt) return;
-    setSavingSchedule(true);
-    try {
-      await api.post(`/leads/${schedulingLead.id}/recontact/schedule`, {
-        nextContactAt: new Date(nextContactAt).toISOString(),
-      });
-      setSchedulingLead(null);
-      await fetchLeads();
-    } catch (error) {
-      console.error('Failed to schedule recontact:', error);
-    } finally {
-      setSavingSchedule(false);
-    }
+  const startRecontact = (lead: Lead) => {
+    navigate(`/leads/new?recontactId=${lead.id}`, { state: { recontactLead: lead } });
   };
 
   return (
@@ -178,11 +157,12 @@ export default function NoAnswerLeads() {
                           <Edit size={18} />
                         </button>
                         <button
-                          onClick={() => openSchedule(lead)}
-                          className="p-2 hover:bg-indigo-100 rounded-lg text-indigo-600 transition-colors"
-                          title="جدولة إعادة تواصل"
+                          onClick={() => startRecontact(lead)}
+                          className="px-2.5 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition-colors flex items-center gap-1"
+                          title="إعادة التواصل"
                         >
-                          <CalendarClock size={18} />
+                          <RefreshCcw size={14} />
+                          إعادة التواصل
                         </button>
                         {user?.role === 'ADMIN' && (
                           <button
@@ -220,7 +200,7 @@ export default function NoAnswerLeads() {
                   <a href={`tel:${lead.phone}`} className="py-2 rounded-lg bg-emerald-50 text-emerald-700 text-center font-bold">اتصال</a>
                   <button onClick={() => openWhatsApp(lead.whatsappPhone || lead.phone)} className="py-2 rounded-lg bg-green-50 text-green-700 text-center font-bold">واتساب</button>
                   <button onClick={() => setSelectedLead(lead)} className="py-2 rounded-lg bg-blue-50 text-blue-700 text-center font-bold">تعديل</button>
-                  <button onClick={() => openSchedule(lead)} className="py-2 rounded-lg bg-indigo-50 text-indigo-700 text-center font-bold">جدولة</button>
+                  <button onClick={() => startRecontact(lead)} className="py-2 rounded-lg bg-indigo-600 text-white text-center font-bold flex items-center justify-center gap-1"><RefreshCcw size={14} />إعادة التواصل</button>
                 </div>
               </div>
             ))
@@ -234,30 +214,6 @@ export default function NoAnswerLeads() {
           onClose={() => setSelectedLead(null)}
           onUpdate={handleLeadUpdate}
         />
-      )}
-
-      {schedulingLead && (
-        <div className="fixed inset-0 bg-black/50 z-50 p-4 flex items-center justify-center">
-          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden">
-            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="font-bold text-slate-800">جدولة إعادة التواصل</h3>
-              <button onClick={() => setSchedulingLead(null)}><X size={20} /></button>
-            </div>
-            <div className="p-4 space-y-4">
-              <p className="text-sm text-slate-600">العميل: <span className="font-bold text-slate-800">{schedulingLead.name}</span></p>
-              <input
-                type="datetime-local"
-                className="input-field"
-                value={nextContactAt}
-                onChange={(e) => setNextContactAt(e.target.value)}
-              />
-              <button onClick={scheduleRecontact} disabled={savingSchedule || !nextContactAt} className="btn-primary w-full flex items-center justify-center gap-2">
-                <Check size={18} />
-                {savingSchedule ? 'جارٍ الحفظ...' : 'نقل إلى إعادة التواصل'}
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );

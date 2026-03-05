@@ -1,5 +1,22 @@
 # نشر النظام سحابياً
 
+## نشر سريع على Render (الأسهل)
+1. ادخل إلى Render ثم New + → Web Service.
+2. اختر مستودع GitHub: `yossefe532/crm_phones`.
+3. الإعدادات:
+   - Runtime: Docker
+   - Branch: `main`
+   - Root Directory: اتركها فارغة
+4. أضف Environment Variables:
+   - `JWT_SECRET` = قيمة طويلة عشوائية
+   - `DATABASE_URL` = `file:/var/data/dev.db`
+5. من إعدادات الخدمة أضف Persistent Disk:
+   - Mount Path: `/var/data`
+   - Size: 1 GB أو أكثر
+6. اضغط Deploy.
+
+بعد نجاح النشر افتح رابط Render وسيعمل النظام كامل (واجهة + API).
+
 ## 1) تجهيز سيرفر سحابي
 - أنشئ VPS عليه Ubuntu 22.04 أو أحدث.
 - اربط دومينك بعنوان السيرفر (A Record).

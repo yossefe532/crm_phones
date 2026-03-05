@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { existsSync } from 'fs';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 
@@ -1618,6 +1619,14 @@ async function startServer() {
       res.status(500).json({ error: 'Failed to update template' });
     }
   });
+
+  const publicDir = join(__dirname, 'public');
+  if (existsSync(publicDir)) {
+    app.use(express.static(publicDir));
+    app.get(/^(?!\/api).*/, (_, res) => {
+      res.sendFile(join(publicDir, 'index.html'));
+    });
+  }
 
   app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
