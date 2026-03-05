@@ -20,8 +20,10 @@ const LEAD_STATUSES = new Set(['NEW', 'INTERESTED', 'AGREED', 'REJECTED', 'HESIT
 const LEAD_SOURCES = new Set(['CALL', 'SEND', 'POOL']);
 const LEAD_GENDERS = new Set(['MALE', 'FEMALE', 'UNKNOWN']);
 const USER_ROLES = new Set(['ADMIN', 'TEAM_LEAD', 'SALES']);
+const MANAGEABLE_ROLES = new Set(['TEAM_LEAD', 'SALES']);
 const POOL_SOURCE = 'POOL';
 const POOL_STATUS = 'NEW';
+const MAX_TEAM_LEADS_PER_TEAM = 2;
 const DEFAULT_TEMPLATES = [
   { status: 'AGREED', content: 'السلام عليكم {customer_title} {customer_name}، مع حضرتك {user_name} من إيديكون. تم تأكيد موافقتك، وبرجاء إرسال التفاصيل النهائية.' },
   { status: 'REJECTED', content: 'شكراً لوقتك {customer_title} {customer_name}، نتمنى لك التوفيق.' },
@@ -214,6 +216,22 @@ const ensureEmployeeProfile = async (userId) => prisma.employeeProfile.upsert({
   create: { userId },
 });
 
+const countTeamLeads = async (teamId, { excludeUserId } = {}) => prisma.user.count({
+  where: {
+    role: 'TEAM_LEAD',
+    teamId,
+    ...(excludeUserId ? { id: { not: excludeUserId } } : {}),
+  },
+});
+
+const assertTeamLeadCapacity = async (teamId, { excludeUserId } = {}) => {
+  const leadersCount = await countTeamLeads(teamId, { excludeUserId });
+  if (leadersCount >= MAX_TEAM_LEADS_PER_TEAM) {
+    return `Each team can have only ${MAX_TEAM_LEADS_PER_TEAM} team leads`;
+  }
+  return null;
+};
+
 async function startServer() {
   console.log('Connecting to database...');
   try {
@@ -340,12 +358,15 @@ async function startServer() {
       }
 
       if (effectiveTeamId) {
-        const team = await prisma.team.findUnique({ where: { id: effectiveTeamId }, select: { id: true, leadId: true } });
+        const team = await prisma.team.findUnique({ where: { id: effectiveTeamId }, select: { id: true } });
         if (!team) {
           return res.status(404).json({ error: 'Team not found' });
         }
-        if (normalizedRole === 'TEAM_LEAD' && team.leadId) {
-          return res.status(409).json({ error: 'Team already has a lead' });
+        if (normalizedRole === 'TEAM_LEAD') {
+          const leadCapacityError = await assertTeamLeadCapacity(effectiveTeamId);
+          if (leadCapacityError) {
+            return res.status(409).json({ error: leadCapacityError });
+          }
         }
       }
 
@@ -374,13 +395,6 @@ async function startServer() {
         },
       });
 
-      if (normalizedRole === 'TEAM_LEAD' && effectiveTeamId) {
-        await prisma.team.update({
-          where: { id: effectiveTeamId },
-          data: { leadId: user.id },
-        });
-      }
-
       res.status(201).json({
         id: user.id,
         name: user.name,
@@ -401,7 +415,6 @@ async function startServer() {
   // POST /api/teams (Admin only)
   app.post('/api/teams', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
     const teamName = normalizeTeamName(req.body?.name);
-    const leadId = parseOptionalTeamId(req.body?.leadId);
     if (!teamName) {
       return res.status(400).json({ error: 'Team name is required' });
     }
@@ -410,19 +423,9 @@ async function startServer() {
       const team = await prisma.team.create({
         data: {
           name: teamName,
-          ...(leadId ? { leadId } : {}),
         },
-        include: {
-          lead: { select: { id: true, name: true, email: true } },
-        },
+      select: { id: true, name: true, createdAt: true, updatedAt: true },
       });
-
-      if (leadId) {
-        await prisma.user.update({
-          where: { id: leadId },
-          data: { role: 'TEAM_LEAD', teamId: team.id },
-        });
-      }
 
       return res.status(201).json(team);
     } catch (error) {
@@ -446,7 +449,10 @@ async function startServer() {
       const teams = await prisma.team.findMany({
         where,
         include: {
-          lead: { select: { id: true, name: true, email: true } },
+          users: {
+            where: { role: 'TEAM_LEAD' },
+            select: { id: true, name: true, email: true },
+          },
           _count: { select: { users: true, leads: true } },
         },
         orderBy: { name: 'asc' },
@@ -458,19 +464,257 @@ async function startServer() {
     }
   });
 
-  // DELETE /api/users/:id (Admin only)
-  app.delete('/api/users/:id', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+  app.get('/api/team-management', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) {
+      return res.status(401).json({ error: 'Invalid user context' });
+    }
+    if (actor.role === 'TEAM_LEAD' && !actor.teamId) {
+      return res.status(400).json({ error: 'User is not assigned to a team' });
+    }
+
+    try {
+      const where = actor.role === 'ADMIN' ? {} : { id: actor.teamId };
+      const teams = await prisma.team.findMany({
+        where,
+        orderBy: { name: 'asc' },
+        include: {
+          users: {
+            where: { role: { in: ['TEAM_LEAD', 'SALES'] } },
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              role: true,
+              teamId: true,
+              employeeProfile: true,
+            },
+            orderBy: [{ role: 'asc' }, { name: 'asc' }],
+          },
+          _count: { select: { users: true, leads: true } },
+        },
+      });
+
+      const { start, end } = buildDayRange();
+      const result = await Promise.all(teams.map(async (team) => {
+        const [agreed, hesitant, rejected, noAnswer, recontact, poolCount, callsToday] = await Promise.all([
+          prisma.lead.count({ where: { teamId: team.id, source: { not: POOL_SOURCE }, status: 'AGREED' } }),
+          prisma.lead.count({ where: { teamId: team.id, source: { not: POOL_SOURCE }, status: 'HESITANT' } }),
+          prisma.lead.count({ where: { teamId: team.id, source: { not: POOL_SOURCE }, status: 'REJECTED' } }),
+          prisma.lead.count({ where: { teamId: team.id, source: { not: POOL_SOURCE }, status: 'NO_ANSWER' } }),
+          prisma.lead.count({ where: { teamId: team.id, source: { not: POOL_SOURCE }, status: 'RECONTACT' } }),
+          prisma.lead.count({ where: buildPoolWhere({ teamId: team.id }) }),
+          prisma.interaction.count({
+            where: {
+              type: { in: ['CALL', 'SEND'] },
+              date: { gte: start, lt: end },
+              lead: { teamId: team.id },
+            },
+          }),
+        ]);
+        const salesMembers = team.users.filter((member) => member.role === 'SALES');
+        const teamLeadMembers = team.users.filter((member) => member.role === 'TEAM_LEAD');
+        const totalTarget = salesMembers.reduce((sum, member) => sum + (member.employeeProfile?.dailyCallTarget || 0), 0);
+        const nonPoolTotal = agreed + hesitant + rejected + noAnswer + recontact;
+
+        return {
+          id: team.id,
+          name: team.name,
+          members: team.users,
+          stats: {
+            membersCount: team.users.length,
+            salesCount: salesMembers.length,
+            teamLeadsCount: teamLeadMembers.length,
+            totalLeads: nonPoolTotal,
+            poolCount,
+            agreed,
+            hesitant,
+            rejected,
+            noAnswer,
+            recontact,
+            callsToday,
+            totalTarget,
+          },
+        };
+      }));
+
+      return res.json(result);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch team management data' });
+    }
+  });
+
+  app.put('/api/team-management/members/:id/role', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const userId = parseInteger(req.params.id);
+    const normalizedRole = typeof req.body?.role === 'string' ? req.body.role.trim().toUpperCase() : '';
+    if (userId === null || userId < 1) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    if (!MANAGEABLE_ROLES.has(normalizedRole)) {
+      return res.status(400).json({ error: 'Invalid role update target' });
+    }
+
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, role: true, teamId: true },
+      });
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      if (!user.teamId) {
+        return res.status(400).json({ error: 'Target user is not assigned to a team' });
+      }
+      if (!MANAGEABLE_ROLES.has(user.role)) {
+        return res.status(400).json({ error: 'Only team members can be updated' });
+      }
+      if (normalizedRole === user.role) {
+        return res.json({ message: 'No role changes detected' });
+      }
+      if (normalizedRole === 'TEAM_LEAD') {
+        const leadCapacityError = await assertTeamLeadCapacity(user.teamId, { excludeUserId: user.id });
+        if (leadCapacityError) {
+          return res.status(409).json({ error: leadCapacityError });
+        }
+      }
+
+      const updated = await prisma.user.update({
+        where: { id: user.id },
+        data: { role: normalizedRole },
+        include: {
+          team: { select: { id: true, name: true } },
+          employeeProfile: true,
+        },
+      });
+
+      if (normalizedRole === 'SALES') {
+        await ensureEmployeeProfile(updated.id);
+      }
+
+      return res.json(updated);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to update member role' });
+    }
+  });
+
+  app.post('/api/team-management/members', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) {
+      return res.status(401).json({ error: 'Invalid user context' });
+    }
+
+    const { name, email, password, role, employeeProfile, teamId: rawTeamId } = req.body;
+    const normalizedName = normalizeNullableString(name, 120);
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const normalizedRole = typeof role === 'string' ? role.trim().toUpperCase() : 'SALES';
+    const requestedTeamId = parseOptionalTeamId(rawTeamId);
+
+    if (!normalizedName) return res.status(400).json({ error: 'Name is required' });
+    if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      return res.status(400).json({ error: 'Valid email is required' });
+    }
+    if (typeof password !== 'string' || password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+    if (!MANAGEABLE_ROLES.has(normalizedRole)) {
+      return res.status(400).json({ error: 'Role must be SALES or TEAM_LEAD' });
+    }
+    if (actor.role === 'TEAM_LEAD' && normalizedRole !== 'SALES') {
+      return res.status(403).json({ error: 'Team lead can only add sales members' });
+    }
+
+    const actorTeamError = actor.role === 'TEAM_LEAD' ? assertTeamScopedUser(actor) : null;
+    if (actorTeamError) {
+      return res.status(400).json({ error: actorTeamError });
+    }
+
+    const profileInput = employeeProfile && typeof employeeProfile === 'object' ? employeeProfile : {};
+    const { payload: profilePayload, errors: profileErrors } = buildEmployeeProfilePayload(profileInput);
+    if (profileErrors.length) {
+      return res.status(400).json({ error: profileErrors[0] });
+    }
+
+    try {
+      const effectiveTeamId = actor.role === 'ADMIN' ? requestedTeamId : actor.teamId;
+      if (!effectiveTeamId) {
+        return res.status(400).json({ error: 'Team is required' });
+      }
+      const team = await prisma.team.findUnique({ where: { id: effectiveTeamId }, select: { id: true } });
+      if (!team) {
+        return res.status(404).json({ error: 'Team not found' });
+      }
+      if (normalizedRole === 'TEAM_LEAD') {
+        const leadCapacityError = await assertTeamLeadCapacity(effectiveTeamId);
+        if (leadCapacityError) {
+          return res.status(409).json({ error: leadCapacityError });
+        }
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const created = await prisma.user.create({
+        data: {
+          name: normalizedName,
+          email: normalizedEmail,
+          password: hashedPassword,
+          role: normalizedRole,
+          teamId: effectiveTeamId,
+          ...(normalizedRole === 'SALES'
+            ? {
+                employeeProfile: {
+                  create: {
+                    dailyCallTarget: 30,
+                    ...profilePayload,
+                  },
+                },
+              }
+            : {}),
+        },
+        include: {
+          team: { select: { id: true, name: true } },
+          employeeProfile: true,
+        },
+      });
+
+      return res.status(201).json(created);
+    } catch (error) {
+      if (error?.code === 'P2002') {
+        return res.status(409).json({ error: 'Email already exists' });
+      }
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to add member' });
+    }
+  });
+
+  // DELETE /api/users/:id
+  app.delete('/api/users/:id', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
     const userId = parseInteger(req.params.id);
     if (userId === null || userId < 1) {
       return res.status(400).json({ error: 'Invalid user id' });
     }
-    if (userId === req.user.id) {
-      return res.status(400).json({ error: 'Admin cannot delete current account' });
-    }
     try {
-      const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true } });
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+      if (userId === req.user.id) {
+        return res.status(400).json({ error: 'Cannot delete current account' });
+      }
+
+      const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true, teamId: true } });
       if (!user) {
         return res.status(404).json({ error: 'User not found' });
+      }
+      if (actor.role === 'TEAM_LEAD') {
+        if (!actor.teamId) {
+          return res.status(400).json({ error: 'User is not assigned to a team' });
+        }
+        if (user.role !== 'SALES' || user.teamId !== actor.teamId) {
+          return res.status(403).json({ error: 'You can only remove sales members from your team' });
+        }
+      } else if (user.role === 'ADMIN') {
+        return res.status(403).json({ error: 'Admin accounts cannot be removed' });
       }
 
       await prisma.$transaction(async (tx) => {
@@ -497,7 +741,7 @@ async function startServer() {
       return res.status(401).json({ error: 'Invalid user context' });
     }
 
-    const { leads, teamId: rawTeamId } = req.body; // Array of { name, phone, source }
+    const { leads, teamId: rawTeamId, uploadScope } = req.body;
     if (!Array.isArray(leads) || leads.length === 0) {
       return res.status(400).json({ error: 'Leads array is required' });
     }
@@ -515,46 +759,59 @@ async function startServer() {
     }
 
     try {
+      const isUploadAll = actor.role === 'ADMIN' && uploadScope === 'ALL';
       const requestedTeamId = parseOptionalTeamId(rawTeamId);
-      const effectiveTeamId = actor.role === 'ADMIN' ? requestedTeamId : actor.teamId;
-      if (!effectiveTeamId) {
-        return res.status(400).json({ error: 'teamId is required for pool upload' });
-      }
-      const team = await prisma.team.findUnique({ where: { id: effectiveTeamId }, select: { id: true } });
-      if (!team) {
-        return res.status(404).json({ error: 'Team not found' });
-      }
+      let targetTeamIds = [];
 
-      // Use transaction or sequential create instead of createMany to avoid SQLite limitations or version issues
+      if (actor.role === 'TEAM_LEAD') {
+        if (!actor.teamId) {
+          return res.status(400).json({ error: 'User is not assigned to a team' });
+        }
+        targetTeamIds = [actor.teamId];
+      } else if (isUploadAll) {
+        const allTeams = await prisma.team.findMany({ select: { id: true } });
+        targetTeamIds = allTeams.map((team) => team.id);
+        if (!targetTeamIds.length) {
+          return res.status(400).json({ error: 'No teams available to upload data for all teams' });
+        }
+      } else {
+        if (!requestedTeamId) {
+          return res.status(400).json({ error: 'teamId is required for team upload' });
+        }
+        const team = await prisma.team.findUnique({ where: { id: requestedTeamId }, select: { id: true } });
+        if (!team) {
+          return res.status(404).json({ error: 'Team not found' });
+        }
+        targetTeamIds = [requestedTeamId];
+      }
       let count = 0;
-      // Process in batches or individually
-      // For simplicity and error handling, let's do parallel promises in chunks
       
       const chunkSize = 50;
       for (let i = 0; i < safeLeads.length; i += chunkSize) {
         const chunk = safeLeads.slice(i, i + chunkSize);
-        await Promise.all(chunk.map(async (l) => {
-          try {
-             await prisma.lead.create({
-              data: {
-                name: l.name,
-                phone: l.phone,
-                gender: l.gender,
-                status: POOL_STATUS,
-                source: POOL_SOURCE,
-                agentId: null,
-                teamId: effectiveTeamId,
-              }
-            });
-            count++;
-          } catch (e) {
-            console.error(`Failed to import lead ${l.phone}:`, e.message);
-            // Continue with others
-          }
+        await Promise.all(targetTeamIds.map(async (teamId) => {
+          await Promise.all(chunk.map(async (l) => {
+            try {
+              await prisma.lead.create({
+                data: {
+                  name: l.name,
+                  phone: l.phone,
+                  gender: l.gender,
+                  status: POOL_STATUS,
+                  source: POOL_SOURCE,
+                  agentId: null,
+                  teamId,
+                },
+              });
+              count++;
+            } catch (e) {
+              console.error(`Failed to import lead ${l.phone}:`, e.message);
+            }
+          }));
         }));
       }
 
-      res.json({ message: `Successfully added ${count} leads to pool` });
+      res.json({ message: `Successfully added ${count} leads to pool`, teamsCount: targetTeamIds.length });
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Failed to upload leads: ' + error.message });

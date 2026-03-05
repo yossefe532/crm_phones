@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Search, Phone, MessageCircle, Edit, Trash2, RefreshCcw } from 'lucide-react';
 import api from '../services/api';
 import EditLeadModal from '../components/EditLeadModal';
@@ -19,6 +19,7 @@ interface Lead {
 }
 
 export default function NoAnswerLeads() {
+  const REFRESH_INTERVAL_MS = 250;
   const { user } = useAuth();
   const navigate = useNavigate();
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -26,8 +27,11 @@ export default function NoAnswerLeads() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [deletingLeadId, setDeletingLeadId] = useState<number | null>(null);
+  const isFetchingRef = useRef(false);
 
   const fetchLeads = async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     try {
       const response = await api.get('/leads');
       const noAnswerLeads = (response.data || []).filter(
@@ -38,11 +42,18 @@ export default function NoAnswerLeads() {
       console.error('Failed to fetch no answer leads:', error);
     } finally {
       setLoading(false);
+      isFetchingRef.current = false;
     }
   };
 
   useEffect(() => {
-    fetchLeads();
+    void fetchLeads();
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void fetchLeads();
+      }
+    }, REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(intervalId);
   }, []);
 
   const filteredLeads = leads.filter((lead) =>

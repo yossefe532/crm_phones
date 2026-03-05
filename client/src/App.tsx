@@ -10,6 +10,7 @@ import UploadLeads from './pages/admin/UploadLeads';
 import Templates from './pages/admin/Templates';
 import Employees from './pages/admin/Employees';
 import PooledNumbers from './pages/admin/PooledNumbers';
+import TeamManagement from './pages/admin/TeamManagement';
 import PrivateRoute from './components/PrivateRoute';
 import AdminRoute from './components/AdminRoute';
 import SuperAdminRoute from './components/SuperAdminRoute';
@@ -33,6 +34,7 @@ function App() {
             {/* Admin Only Routes */}
             <Route path="admin" element={<AdminRoute />}>
               <Route path="employees" element={<Employees />} />
+              <Route path="teams" element={<TeamManagement />} />
               <Route element={<SuperAdminRoute />}>
                 <Route path="upload" element={<UploadLeads />} />
                 <Route path="templates" element={<Templates />} />

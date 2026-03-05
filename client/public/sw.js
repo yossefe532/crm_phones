@@ -1,6 +1,23 @@
-const APP_CACHE = 'crm-app-shell-v1';
-const RUNTIME_CACHE = 'crm-runtime-v1';
-const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/vite.svg'];
+const APP_CACHE = 'crm-app-shell-v2';
+const RUNTIME_CACHE = 'crm-runtime-v2';
+const APP_SHELL = [
+  '/',
+  '/index.html',
+  '/offline.html',
+  '/manifest.webmanifest',
+  '/icons/icon-72.png',
+  '/icons/icon-96.png',
+  '/icons/icon-128.png',
+  '/icons/icon-144.png',
+  '/icons/icon-152.png',
+  '/icons/icon-167.png',
+  '/icons/icon-180.png',
+  '/icons/icon-192.png',
+  '/icons/icon-256.png',
+  '/icons/icon-384.png',
+  '/icons/icon-512.png',
+  '/icons/icon-maskable-512.png',
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -31,7 +48,7 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(async () => {
           const cached = await caches.match(request);
-          return cached || caches.match('/index.html');
+          return cached || caches.match('/offline.html');
         }),
     );
     return;

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>غير متصل بالإنترنت</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: "Cairo", Arial, sans-serif;
+        background: linear-gradient(135deg, #0f172a, #111827);
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        padding: 24px;
+      }
+      .card {
+        width: 100%;
+        max-width: 460px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 18px;
+        padding: 24px;
+        text-align: center;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+      }
+      h1 { margin: 0 0 8px; font-size: 26px; }
+      p { margin: 0 0 20px; color: #cbd5e1; line-height: 1.7; }
+      button {
+        border: 0;
+        background: #10b981;
+        color: #fff;
+        padding: 12px 20px;
+        border-radius: 12px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>أنت غير متصل الآن</h1>
+      <p>لا يوجد اتصال بالإنترنت حاليًا. بمجرد رجوع الشبكة يمكنك المتابعة بشكل طبيعي.</p>
+      <button onclick="location.reload()">إعادة المحاولة</button>
+    </div>
+  </body>
+</html>

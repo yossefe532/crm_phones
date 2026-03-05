@@ -18,6 +18,7 @@ export default function UploadLeads() {
   const [mode, setMode] = useState<'TEXT' | 'FILE'>('TEXT');
   const [teams, setTeams] = useState<TeamOption[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<number | ''>('');
+  const [uploadScope, setUploadScope] = useState<'TEAM' | 'ALL'>('TEAM');
   const { user } = useAuth();
 
   useEffect(() => {
@@ -37,7 +38,8 @@ export default function UploadLeads() {
   }, []);
 
   const processData = async (data: any[]) => {
-    if (!selectedTeamId) {
+    const isUploadAll = user?.role === 'ADMIN' && uploadScope === 'ALL';
+    if (!isUploadAll && !selectedTeamId) {
       setError('يجب اختيار الفريق قبل الرفع');
       return;
     }
@@ -64,7 +66,11 @@ export default function UploadLeads() {
         throw new Error('لا توجد بيانات صالحة للمعالجة');
       }
 
-      const response = await api.post('/leads/bulk', { leads, teamId: selectedTeamId });
+      const response = await api.post('/leads/bulk', {
+        leads,
+        teamId: isUploadAll ? null : selectedTeamId,
+        uploadScope: isUploadAll ? 'ALL' : 'TEAM',
+      });
       setSuccess(response.data.message);
       setTextInput('');
     } catch (err: any) {
@@ -110,17 +116,30 @@ export default function UploadLeads() {
     <div className="space-y-6">
       <div>
         <h2 className="text-3xl font-bold text-slate-800 mb-2">رفع داتا أرقام</h2>
-        <p className="text-slate-600">إضافة مجموعة كبيرة من الأرقام إلى مجمع فريق محدد</p>
+        <p className="text-slate-600">إضافة مجموعة كبيرة من الأرقام إلى مجمع فريق محدد أو لجميع الفرق</p>
       </div>
 
       <div className="glass-card p-6">
+        {user?.role === 'ADMIN' && (
+          <div className="mb-4">
+            <label className="block text-sm font-bold text-slate-700 mb-2">نطاق الرفع</label>
+            <select
+              className="input-field"
+              value={uploadScope}
+              onChange={(e) => setUploadScope(e.target.value as 'TEAM' | 'ALL')}
+            >
+              <option value="TEAM">لفريق واحد</option>
+              <option value="ALL">لجميع الفرق</option>
+            </select>
+          </div>
+        )}
         <div className="mb-4">
           <label className="block text-sm font-bold text-slate-700 mb-2">الفريق</label>
           <select
             className="input-field"
             value={selectedTeamId}
             onChange={(e) => setSelectedTeamId(e.target.value ? Number(e.target.value) : '')}
-            disabled={user?.role === 'TEAM_LEAD' && teams.length === 1}
+            disabled={(user?.role === 'TEAM_LEAD' && teams.length === 1) || (user?.role === 'ADMIN' && uploadScope === 'ALL')}
           >
             <option value="">اختر الفريق</option>
             {teams.map((team) => (
@@ -129,6 +148,9 @@ export default function UploadLeads() {
               </option>
             ))}
           </select>
+          {user?.role === 'ADMIN' && uploadScope === 'ALL' && (
+            <p className="text-xs text-slate-500 mt-2">سيتم إضافة كل رقم إلى مجمع كل فريق.</p>
+          )}
         </div>
 
         <div className="flex gap-4 mb-6">

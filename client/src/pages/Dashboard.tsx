@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Users, 
   CheckCircle2, 
@@ -32,13 +32,17 @@ interface Stats {
 }
 
 export default function Dashboard() {
+  const REFRESH_INTERVAL_MS = 250;
   const { user } = useAuth();
   const navigate = useNavigate();
   const [stats, setStats] = useState<Stats>({ total: 0, agreed: 0, hesitant: 0, rejected: 0, poolCount: 0 });
   const [loading, setLoading] = useState(true);
   const [claiming, setClaiming] = useState(false);
+  const isFetchingRef = useRef(false);
 
   const fetchStats = async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     try {
       const response = await api.get('/stats');
       setStats(response.data);
@@ -46,11 +50,18 @@ export default function Dashboard() {
       console.error('Failed to fetch stats:', error);
     } finally {
       setLoading(false);
+      isFetchingRef.current = false;
     }
   };
 
   useEffect(() => {
-    fetchStats();
+    void fetchStats();
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void fetchStats();
+      }
+    }, REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(intervalId);
   }, []);
 
   const claimLead = async () => {

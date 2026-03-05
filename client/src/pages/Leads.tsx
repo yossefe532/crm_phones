@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import { 
@@ -30,6 +30,7 @@ interface Lead {
 }
 
 export default function Leads() {
+  const REFRESH_INTERVAL_MS = 250;
   const { user } = useAuth();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,8 +38,11 @@ export default function Leads() {
   const [filterStatus, setFilterStatus] = useState('ALL');
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [deletingLeadId, setDeletingLeadId] = useState<number | null>(null);
+  const isFetchingRef = useRef(false);
 
   const fetchLeads = async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     try {
       const response = await api.get('/leads');
       setLeads(response.data);
@@ -46,11 +50,18 @@ export default function Leads() {
       console.error('Failed to fetch leads:', error);
     } finally {
       setLoading(false);
+      isFetchingRef.current = false;
     }
   };
 
   useEffect(() => {
-    fetchLeads();
+    void fetchLeads();
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void fetchLeads();
+      }
+    }, REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(intervalId);
   }, []);
 
   const filteredLeads = leads

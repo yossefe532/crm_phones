@@ -6,6 +6,7 @@ import {
   PhoneMissed,
   PhoneCall,
   UsersRound, 
+  ShieldCheck,
   MessageSquare, 
   X,
   LogOut,
@@ -35,13 +36,14 @@ export default function Sidebar() {
   ];
 
   const adminItems = [
+    { to: '/admin/teams', icon: ShieldCheck, label: 'إدارة الفرق' },
     { to: '/admin/employees', icon: UsersRound, label: 'إدارة الموظفين' },
     { to: '/admin/upload', icon: Upload, label: 'رفع داتا أرقام' },
     { to: '/admin/pooled-numbers', icon: Database, label: 'الأرقام المجمعة' },
     { to: '/admin/templates', icon: MessageSquare, label: 'قوالب الرسائل' },
   ];
   const visibleAdminItems = user?.role === 'TEAM_LEAD'
-    ? adminItems.filter((item) => item.to === '/admin/employees')
+    ? adminItems.filter((item) => item.to === '/admin/employees' || item.to === '/admin/teams')
     : adminItems;
 
   return (
