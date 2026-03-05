@@ -1,0 +1,101 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              Int              @id @default(autoincrement())
+  name            String
+  email           String           @unique
+  password        String
+  role            String           // ADMIN, TEAM_LEAD, SALES
+  teamId          Int?
+  team            Team?            @relation(fields: [teamId], references: [id])
+  leads           Lead[]
+  employeeProfile EmployeeProfile?
+  managedTeam     Team?            @relation("TeamLead")
+
+  @@index([teamId])
+}
+
+model Lead {
+  id           Int           @id @default(autoincrement())
+  name         String
+  phone        String
+  whatsappPhone String?
+  gender       String        @default("UNKNOWN") // MALE, FEMALE, UNKNOWN
+  status       String        // NEW, INTERESTED, AGREED, REJECTED, HESITANT, SPONSOR, NO_ANSWER, RECONTACT
+  source       String        // CALL, SEND, POOL
+  notes        String?
+  recontactAttempts Int      @default(0)
+  nextRecontactAt DateTime?
+  lastRecontactAt DateTime?
+  agentId      Int?
+  agent        User?         @relation(fields: [agentId], references: [id])
+  teamId       Int?
+  team         Team?         @relation(fields: [teamId], references: [id])
+  courseId     Int?
+  course       Course?       @relation(fields: [courseId], references: [id])
+  createdAt    DateTime      @default(now())
+  interactions Interaction[]
+
+  @@index([teamId])
+  @@index([status])
+  @@index([nextRecontactAt])
+}
+
+model Course {
+  id    Int    @id @default(autoincrement())
+  name  String
+  price Float
+  leads Lead[]
+}
+
+model Interaction {
+  id      Int      @id @default(autoincrement())
+  leadId  Int
+  lead    Lead     @relation(fields: [leadId], references: [id])
+  type    String   // CALL, SEND
+  outcome String?
+  notes   String?
+  date    DateTime @default(now())
+}
+
+model MessageTemplate {
+  id      Int    @id @default(autoincrement())
+  status  String @unique // AGREED, REJECTED, HESITANT, SPONSOR
+  content String
+}
+
+model EmployeeProfile {
+  id              Int      @id @default(autoincrement())
+  userId           Int      @unique
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department       String   @default("Sales")
+  jobTitle         String?
+  phone            String?
+  timezone         String   @default("Africa/Cairo")
+  dailyCallTarget  Int      @default(30)
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model Team {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  leadId      Int?     @unique
+  lead        User?    @relation("TeamLead", fields: [leadId], references: [id], onDelete: SetNull)
+  users       User[]
+  leads       Lead[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

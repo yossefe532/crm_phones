@@ -1,0 +1,21 @@
+{
+  "name": "نظام إدارة العملاء - أكاديمية إيديكون",
+  "short_name": "Ediccon CRM",
+  "description": "إدارة العملاء والمبيعات والمتابعة اليومية",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

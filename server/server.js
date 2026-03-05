@@ -1,0 +1,1630 @@
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import { PrismaClient } from '@prisma/client';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+dotenv.config({ path: join(__dirname, '.env') });
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-change-this';
+const LEAD_STATUSES = new Set(['NEW', 'INTERESTED', 'AGREED', 'REJECTED', 'HESITANT', 'SPONSOR', 'NO_ANSWER', 'RECONTACT']);
+const LEAD_SOURCES = new Set(['CALL', 'SEND', 'POOL']);
+const LEAD_GENDERS = new Set(['MALE', 'FEMALE', 'UNKNOWN']);
+const USER_ROLES = new Set(['ADMIN', 'TEAM_LEAD', 'SALES']);
+const POOL_SOURCE = 'POOL';
+const POOL_STATUS = 'NEW';
+const DEFAULT_TEMPLATES = [
+  { status: 'AGREED', content: 'السلام عليكم {customer_title} {customer_name}، مع حضرتك {user_name} من إيديكون. تم تأكيد موافقتك، وبرجاء إرسال التفاصيل النهائية.' },
+  { status: 'REJECTED', content: 'شكراً لوقتك {customer_title} {customer_name}، نتمنى لك التوفيق.' },
+  { status: 'HESITANT', content: 'السلام عليكم {customer_title} {customer_name}، مع حضرتك {user_name}. حبيت أتابع مع حضرتك لو في أي استفسار.' },
+  { status: 'SPONSOR', content: 'السلام عليكم {customer_title} {customer_name}، شكراً لاهتمامك بالرعاية. برجاء إرسال التفاصيل المطلوبة.' },
+  { status: 'NO_ANSWER', content: 'السلام عليكم {customer_title} {customer_name}، حاولنا نتواصل مع حضرتك اليوم لكن ماكانش فيه رد. لو مناسب لحضرتك ابعتلنا وقت مناسب وهنكلمك فوراً.' },
+];
+const CORS_ORIGIN = process.env.CORS_ORIGIN || '';
+const allowedOrigins = CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean);
+
+app.use(cors({
+  origin: allowedOrigins.length ? allowedOrigins : true,
+}));
+app.use(express.json());
+
+console.log('Initializing Prisma Client...');
+const prisma = new PrismaClient({
+  log: ['query', 'info', 'warn', 'error'],
+});
+
+// Auth Middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) return res.status(401).json({ error: 'Access denied' });
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) return res.status(403).json({ error: 'Invalid token' });
+    req.user = user;
+    next();
+  });
+};
+
+const authorizeRole = (roles) => {
+  return (req, res, next) => {
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Insufficient permissions' });
+    }
+    next();
+  };
+};
+
+const normalizeSingleQueryValue = (value) => {
+  if (Array.isArray(value)) return value[0];
+  return value;
+};
+
+const buildPoolWhere = (extra = {}) => ({
+  agentId: null,
+  source: POOL_SOURCE,
+  status: POOL_STATUS,
+  ...extra,
+});
+
+const parseInteger = (value) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
+const parseDateTime = (value) => {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const normalizeGender = (value) => {
+  if (typeof value !== 'string') return 'UNKNOWN';
+  const normalized = value.trim().toUpperCase();
+  return LEAD_GENDERS.has(normalized) ? normalized : null;
+};
+
+const normalizeEgyptMobile = (value) => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return /^01[0125][0-9]{8}$/.test(trimmed) ? trimmed : null;
+};
+
+const normalizeTeamName = (value) => normalizeNullableString(value, 120);
+
+const assertTeamScopedUser = (user) => {
+  if (!user?.teamId) {
+    return 'User is not assigned to a team';
+  }
+  return null;
+};
+
+const parseOptionalTeamId = (value) => {
+  if (typeof value === 'undefined' || value === null || value === '') return null;
+  const parsed = parseInteger(value);
+  return parsed && parsed > 0 ? parsed : null;
+};
+
+const getCurrentUserScope = async (userId) => prisma.user.findUnique({
+  where: { id: userId },
+  select: {
+    id: true,
+    role: true,
+    teamId: true,
+    team: { select: { id: true, name: true } },
+  },
+});
+
+const normalizeNullableString = (value, maxLength = 120) => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, maxLength);
+};
+
+const buildEmployeeProfilePayload = (input = {}, { strictTarget = false } = {}) => {
+  const errors = [];
+  const payload = {};
+
+  if (Object.prototype.hasOwnProperty.call(input, 'department')) {
+    const department = normalizeNullableString(input.department, 80);
+    if (!department) {
+      errors.push('Department must be a non-empty string');
+    } else {
+      payload.department = department;
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'jobTitle')) {
+    payload.jobTitle = normalizeNullableString(input.jobTitle, 120);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'phone')) {
+    const phone = normalizeNullableString(input.phone, 25);
+    if (phone && !/^[0-9+\-\s()]{7,25}$/.test(phone)) {
+      errors.push('Invalid employee phone format');
+    } else {
+      payload.phone = phone;
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'timezone')) {
+    const timezone = normalizeNullableString(input.timezone, 80);
+    if (!timezone) {
+      errors.push('Timezone must be a non-empty string');
+    } else {
+      payload.timezone = timezone;
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'isActive')) {
+    if (typeof input.isActive !== 'boolean') {
+      errors.push('isActive must be boolean');
+    } else {
+      payload.isActive = input.isActive;
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'dailyCallTarget')) {
+    const target = parseInteger(input.dailyCallTarget);
+    if (target === null || target < 1 || target > 500) {
+      errors.push('dailyCallTarget must be an integer between 1 and 500');
+    } else {
+      payload.dailyCallTarget = target;
+    }
+  } else if (strictTarget) {
+    errors.push('dailyCallTarget is required');
+  }
+
+  return { payload, errors };
+};
+
+const buildDayRange = () => {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start, end };
+};
+
+const safeCount = (value) => (Number.isFinite(value) && value >= 0 ? value : 0);
+
+const canAccessLeadByScope = ({ actor, lead, userId }) => {
+  if (!actor || !lead) return false;
+  if (actor.role === 'ADMIN') return true;
+  if (actor.role === 'TEAM_LEAD') return lead.teamId === actor.teamId;
+  if (actor.role === 'SALES') return lead.teamId === actor.teamId && lead.agentId === userId;
+  return false;
+};
+
+const ensureEmployeeProfile = async (userId) => prisma.employeeProfile.upsert({
+  where: { userId },
+  update: {},
+  create: { userId },
+});
+
+async function startServer() {
+  console.log('Connecting to database...');
+  try {
+    await prisma.$connect();
+    console.log('Database connected successfully');
+  } catch (e) {
+    console.error('Database connection failed:', e);
+    process.exit(1);
+  }
+  
+  // --- Auth Routes ---
+
+  // POST /api/auth/login
+  app.post('/api/auth/login', async (req, res) => {
+    const { email, password } = req.body;
+    if (typeof email !== 'string' || typeof password !== 'string' || !email.trim() || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    try {
+      const normalizedEmail = email.trim().toLowerCase();
+      const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+      if (!user) return res.status(400).json({ error: 'Invalid credentials' });
+
+      const storedPassword = user.password || '';
+      const isBcryptHash = /^\$2[aby]\$\d{2}\$/.test(storedPassword);
+      let validPassword = false;
+
+      if (isBcryptHash) {
+        validPassword = await bcrypt.compare(password, storedPassword);
+      } else {
+        // Backward compatibility with legacy plaintext passwords.
+        validPassword = password === storedPassword;
+        if (validPassword) {
+          const hashedPassword = await bcrypt.hash(password, 10);
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { password: hashedPassword },
+          });
+        }
+      }
+
+      if (!validPassword) return res.status(400).json({ error: 'Invalid credentials' });
+
+      const token = jwt.sign({
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        name: user.name,
+        teamId: user.teamId || null,
+      }, JWT_SECRET, { expiresIn: '8h' });
+      res.json({
+        token,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          teamId: user.teamId || null,
+        },
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Login failed' });
+    }
+  });
+
+  // POST /api/users (Admin + Team Lead)
+  app.post('/api/users', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) {
+      return res.status(401).json({ error: 'Invalid user context' });
+    }
+
+    const { name, email, password, role, employeeProfile, teamId: rawTeamId } = req.body;
+    const normalizedName = normalizeNullableString(name, 120);
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const normalizedRole = typeof role === 'string' ? role.trim().toUpperCase() : 'SALES';
+    const requestedTeamId = parseOptionalTeamId(rawTeamId);
+
+    if (!normalizedName) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+    if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      return res.status(400).json({ error: 'Valid email is required' });
+    }
+    if (typeof password !== 'string' || password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+    if (!USER_ROLES.has(normalizedRole)) {
+      return res.status(400).json({ error: 'Invalid role' });
+    }
+    if (actor.role === 'TEAM_LEAD' && normalizedRole !== 'SALES') {
+      return res.status(403).json({ error: 'Team lead can only create sales users' });
+    }
+
+    if (normalizedRole === 'TEAM_LEAD' && actor.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Only admin can create team leads' });
+    }
+
+    const actorTeamError = actor.role === 'TEAM_LEAD' ? assertTeamScopedUser(actor) : null;
+    if (actorTeamError) {
+      return res.status(400).json({ error: actorTeamError });
+    }
+
+    const profileInput = employeeProfile && typeof employeeProfile === 'object' ? employeeProfile : {};
+    const { payload: profilePayload, errors: profileErrors } = buildEmployeeProfilePayload(profileInput);
+    if (profileErrors.length) {
+      return res.status(400).json({ error: profileErrors[0] });
+    }
+
+    try {
+      let effectiveTeamId = null;
+      if (normalizedRole === 'ADMIN') {
+        effectiveTeamId = null;
+      } else if (actor.role === 'TEAM_LEAD') {
+        effectiveTeamId = actor.teamId;
+      } else if (requestedTeamId) {
+        effectiveTeamId = requestedTeamId;
+      }
+
+      if (normalizedRole !== 'ADMIN' && !effectiveTeamId) {
+        return res.status(400).json({ error: 'Team is required for non-admin users' });
+      }
+
+      if (effectiveTeamId) {
+        const team = await prisma.team.findUnique({ where: { id: effectiveTeamId }, select: { id: true, leadId: true } });
+        if (!team) {
+          return res.status(404).json({ error: 'Team not found' });
+        }
+        if (normalizedRole === 'TEAM_LEAD' && team.leadId) {
+          return res.status(409).json({ error: 'Team already has a lead' });
+        }
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const user = await prisma.user.create({
+        data: {
+          name: normalizedName,
+          email: normalizedEmail,
+          password: hashedPassword,
+          role: normalizedRole,
+          teamId: effectiveTeamId,
+          ...(normalizedRole === 'SALES'
+            ? {
+                employeeProfile: {
+                  create: {
+                    dailyCallTarget: 30,
+                    ...profilePayload,
+                  },
+                },
+              }
+            : {}),
+        },
+        include: {
+          employeeProfile: true,
+          team: true,
+        },
+      });
+
+      if (normalizedRole === 'TEAM_LEAD' && effectiveTeamId) {
+        await prisma.team.update({
+          where: { id: effectiveTeamId },
+          data: { leadId: user.id },
+        });
+      }
+
+      res.status(201).json({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        teamId: user.teamId,
+        team: user.team,
+        employeeProfile: user.employeeProfile,
+      });
+    } catch (error) {
+      if (error?.code === 'P2002') {
+        return res.status(409).json({ error: 'Email already exists' });
+      }
+      res.status(500).json({ error: 'Failed to create user' });
+    }
+  });
+
+  // POST /api/teams (Admin only)
+  app.post('/api/teams', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const teamName = normalizeTeamName(req.body?.name);
+    const leadId = parseOptionalTeamId(req.body?.leadId);
+    if (!teamName) {
+      return res.status(400).json({ error: 'Team name is required' });
+    }
+
+    try {
+      const team = await prisma.team.create({
+        data: {
+          name: teamName,
+          ...(leadId ? { leadId } : {}),
+        },
+        include: {
+          lead: { select: { id: true, name: true, email: true } },
+        },
+      });
+
+      if (leadId) {
+        await prisma.user.update({
+          where: { id: leadId },
+          data: { role: 'TEAM_LEAD', teamId: team.id },
+        });
+      }
+
+      return res.status(201).json(team);
+    } catch (error) {
+      if (error?.code === 'P2002') {
+        return res.status(409).json({ error: 'Team name already exists or lead already assigned' });
+      }
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to create team' });
+    }
+  });
+
+  // GET /api/teams (Scoped list)
+  app.get('/api/teams', authenticateToken, async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+
+      const where = actor.role === 'ADMIN' ? {} : { id: actor.teamId || -1 };
+      const teams = await prisma.team.findMany({
+        where,
+        include: {
+          lead: { select: { id: true, name: true, email: true } },
+          _count: { select: { users: true, leads: true } },
+        },
+        orderBy: { name: 'asc' },
+      });
+      return res.json(teams);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch teams' });
+    }
+  });
+
+  // DELETE /api/users/:id (Admin only)
+  app.delete('/api/users/:id', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const userId = parseInteger(req.params.id);
+    if (userId === null || userId < 1) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    if (userId === req.user.id) {
+      return res.status(400).json({ error: 'Admin cannot delete current account' });
+    }
+    try {
+      const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true } });
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      await prisma.$transaction(async (tx) => {
+        await tx.lead.updateMany({
+          where: { agentId: userId },
+          data: { agentId: null, source: POOL_SOURCE, status: POOL_STATUS },
+        });
+        await tx.user.delete({ where: { id: userId } });
+      });
+
+      return res.json({ message: 'User deleted successfully' });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to delete user' });
+    }
+  });
+
+  // --- Lead Management Routes ---
+
+  // POST /api/leads/bulk (Admin + Team Lead)
+  app.post('/api/leads/bulk', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) {
+      return res.status(401).json({ error: 'Invalid user context' });
+    }
+
+    const { leads, teamId: rawTeamId } = req.body; // Array of { name, phone, source }
+    if (!Array.isArray(leads) || leads.length === 0) {
+      return res.status(400).json({ error: 'Leads array is required' });
+    }
+
+    const safeLeads = leads
+      .filter((lead) => lead && typeof lead.phone === 'string' && lead.phone.trim())
+      .map((lead) => ({
+        name: typeof lead.name === 'string' && lead.name.trim() ? lead.name.trim() : 'Unknown',
+        phone: lead.phone.trim(),
+        gender: normalizeGender(lead.gender) || 'UNKNOWN',
+      }));
+
+    if (!safeLeads.length) {
+      return res.status(400).json({ error: 'No valid leads to import' });
+    }
+
+    try {
+      const requestedTeamId = parseOptionalTeamId(rawTeamId);
+      const effectiveTeamId = actor.role === 'ADMIN' ? requestedTeamId : actor.teamId;
+      if (!effectiveTeamId) {
+        return res.status(400).json({ error: 'teamId is required for pool upload' });
+      }
+      const team = await prisma.team.findUnique({ where: { id: effectiveTeamId }, select: { id: true } });
+      if (!team) {
+        return res.status(404).json({ error: 'Team not found' });
+      }
+
+      // Use transaction or sequential create instead of createMany to avoid SQLite limitations or version issues
+      let count = 0;
+      // Process in batches or individually
+      // For simplicity and error handling, let's do parallel promises in chunks
+      
+      const chunkSize = 50;
+      for (let i = 0; i < safeLeads.length; i += chunkSize) {
+        const chunk = safeLeads.slice(i, i + chunkSize);
+        await Promise.all(chunk.map(async (l) => {
+          try {
+             await prisma.lead.create({
+              data: {
+                name: l.name,
+                phone: l.phone,
+                gender: l.gender,
+                status: POOL_STATUS,
+                source: POOL_SOURCE,
+                agentId: null,
+                teamId: effectiveTeamId,
+              }
+            });
+            count++;
+          } catch (e) {
+            console.error(`Failed to import lead ${l.phone}:`, e.message);
+            // Continue with others
+          }
+        }));
+      }
+
+      res.json({ message: `Successfully added ${count} leads to pool` });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to upload leads: ' + error.message });
+    }
+  });
+
+  // GET /api/admin/pooled-numbers (Admin only)
+  app.get('/api/admin/pooled-numbers', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const teamId = parseOptionalTeamId(normalizeSingleQueryValue(req.query.teamId));
+    const search = normalizeSingleQueryValue(req.query.search);
+    const where = buildPoolWhere({
+      ...(teamId ? { teamId } : {}),
+      ...(typeof search === 'string' && search.trim()
+        ? {
+            OR: [
+              { name: { contains: search.trim() } },
+              { phone: { contains: search.trim() } },
+            ],
+          }
+        : {}),
+    });
+
+    try {
+      const [leads, total] = await Promise.all([
+        prisma.lead.findMany({
+          where,
+          include: {
+            team: { select: { id: true, name: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+        }),
+        prisma.lead.count({ where }),
+      ]);
+      return res.json({ total, leads });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch pooled numbers' });
+    }
+  });
+
+  // POST /api/leads/claim (Sales - Get a lead from pool)
+  app.post('/api/leads/claim', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'SALES') {
+      return res.status(403).json({ error: 'Only sales users can claim pool leads' });
+    }
+
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) {
+      return res.status(401).json({ error: 'Invalid user context' });
+    }
+    const actorTeamError = assertTeamScopedUser(actor);
+    if (actorTeamError) {
+      return res.status(400).json({ error: actorTeamError });
+    }
+
+    const userId = req.user.id;
+    try {
+      // Guard against race conditions: find candidate then conditionally claim it.
+      const maxAttempts = 5;
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const poolCount = await prisma.lead.count({ where: buildPoolWhere({ teamId: actor.teamId }) });
+        if (!poolCount) return res.status(404).json({ error: 'No leads available in pool' });
+        const randomSkip = Math.floor(Math.random() * poolCount);
+        const lead = await prisma.lead.findFirst({
+          where: buildPoolWhere({ teamId: actor.teamId }),
+          orderBy: { id: 'asc' },
+          skip: randomSkip,
+        });
+
+        if (!lead) return res.status(404).json({ error: 'No leads available in pool' });
+
+        const claimed = await prisma.lead.updateMany({
+          where: buildPoolWhere({ id: lead.id, teamId: actor.teamId }),
+          data: { agentId: userId, status: POOL_STATUS }
+        });
+
+        if (!claimed.count) {
+          continue;
+        }
+
+        const updatedLead = await prisma.lead.findUnique({ where: { id: lead.id } });
+        return res.json(updatedLead);
+      }
+
+      return res.status(409).json({ error: 'Lead was claimed by another user, please retry' });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to claim lead' });
+    }
+  });
+
+  // POST /api/leads/:id/finalize-claim (Sales - finalize claimed pool lead)
+  app.post('/api/leads/:id/finalize-claim', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'SALES') {
+      return res.status(403).json({ error: 'Only sales users can finalize claimed leads' });
+    }
+
+    const leadId = parseInteger(req.params.id);
+    if (leadId === null) {
+      return res.status(400).json({ error: 'Invalid lead id' });
+    }
+
+    const { name, status, source, notes, courseId, gender, whatsappPhone } = req.body;
+    if (typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+    if (!LEAD_STATUSES.has(status)) {
+      return res.status(400).json({ error: 'Invalid status value' });
+    }
+    if (!['CALL', 'SEND'].includes(source)) {
+      return res.status(400).json({ error: 'Invalid source value' });
+    }
+    const normalizedGender = normalizeGender(gender);
+    if (!normalizedGender) {
+      return res.status(400).json({ error: 'Invalid gender value' });
+    }
+    const hasWhatsappPhone = Object.prototype.hasOwnProperty.call(req.body, 'whatsappPhone');
+    const normalizedWhatsappPhone = hasWhatsappPhone ? normalizeEgyptMobile(whatsappPhone) : null;
+    if (hasWhatsappPhone && whatsappPhone && !normalizedWhatsappPhone) {
+      return res.status(400).json({ error: 'Invalid whatsappPhone value' });
+    }
+
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) {
+      return res.status(401).json({ error: 'Invalid user context' });
+    }
+    const actorTeamError = assertTeamScopedUser(actor);
+    if (actorTeamError) {
+      return res.status(400).json({ error: actorTeamError });
+    }
+
+    const parsedCourseId = courseId ? parseInt(courseId, 10) : null;
+    try {
+      const existingLead = await prisma.lead.findUnique({ where: { id: leadId } });
+      if (!existingLead) {
+        return res.status(404).json({ error: 'Lead not found' });
+      }
+
+      if (existingLead.source !== POOL_SOURCE || existingLead.agentId !== req.user.id || existingLead.teamId !== actor.teamId) {
+        return res.status(403).json({ error: 'Lead is not claimed by current user' });
+      }
+
+      const finalizedLead = await prisma.$transaction(async (tx) => {
+        if (status === POOL_STATUS) {
+          return tx.lead.update({
+            where: { id: leadId },
+            data: {
+              name: name.trim(),
+              notes,
+              gender: normalizedGender,
+              status: POOL_STATUS,
+              source: POOL_SOURCE,
+              agentId: null,
+              courseId: null,
+              whatsappPhone: null,
+            },
+          });
+        }
+
+        const updatedLead = await tx.lead.update({
+          where: { id: leadId },
+          data: {
+            name: name.trim(),
+            notes,
+            gender: normalizedGender,
+            status,
+            source,
+            agentId: req.user.id,
+            courseId: Number.isNaN(parsedCourseId) ? null : parsedCourseId,
+            whatsappPhone: hasWhatsappPhone ? normalizedWhatsappPhone : null,
+          },
+        });
+
+        await tx.interaction.create({
+          data: {
+            leadId: updatedLead.id,
+            type: source === 'SEND' ? 'SEND' : 'CALL',
+            outcome: status || null,
+            notes: notes || null,
+          },
+        });
+
+        return updatedLead;
+      });
+
+      return res.json(finalizedLead);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to finalize claimed lead' });
+    }
+  });
+
+  app.post('/api/leads/:id/release-claim', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'SALES') {
+      return res.status(403).json({ error: 'Only sales users can release claimed leads' });
+    }
+
+    const leadId = parseInteger(req.params.id);
+    if (leadId === null) {
+      return res.status(400).json({ error: 'Invalid lead id' });
+    }
+
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) {
+      return res.status(401).json({ error: 'Invalid user context' });
+    }
+    const actorTeamError = assertTeamScopedUser(actor);
+    if (actorTeamError) {
+      return res.status(400).json({ error: actorTeamError });
+    }
+
+    try {
+      const released = await prisma.lead.updateMany({
+        where: { id: leadId, teamId: actor.teamId, source: POOL_SOURCE, status: POOL_STATUS, agentId: req.user.id },
+        data: { agentId: null },
+      });
+      if (!released.count) {
+        return res.status(409).json({ error: 'Lead is no longer claimed by current user' });
+      }
+      return res.json({ success: true });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to release claimed lead' });
+    }
+  });
+
+  // GET /api/leads/pool (Sales - View unassigned leads only)
+  app.get('/api/leads/pool', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'SALES') {
+      return res.status(403).json({ error: 'Pool list is for sales users only' });
+    }
+
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) {
+      return res.status(401).json({ error: 'Invalid user context' });
+    }
+    const actorTeamError = assertTeamScopedUser(actor);
+    if (actorTeamError) {
+      return res.status(400).json({ error: actorTeamError });
+    }
+
+    try {
+      const leads = await prisma.lead.findMany({
+        where: buildPoolWhere({ teamId: actor.teamId }),
+        orderBy: { createdAt: 'asc' },
+      });
+      res.json(leads);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to fetch pool leads' });
+    }
+  });
+
+  // POST /api/leads/:id/assign (Sales - Assign a specific pool lead)
+  app.post('/api/leads/:id/assign', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'SALES') {
+      return res.status(403).json({ error: 'Only sales users can assign pool leads' });
+    }
+
+    const { id } = req.params;
+    const leadId = parseInt(id);
+    if (Number.isNaN(leadId)) {
+      return res.status(400).json({ error: 'Invalid lead id' });
+    }
+
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) {
+      return res.status(401).json({ error: 'Invalid user context' });
+    }
+    const actorTeamError = assertTeamScopedUser(actor);
+    if (actorTeamError) {
+      return res.status(400).json({ error: actorTeamError });
+    }
+
+    try {
+      const assigned = await prisma.lead.updateMany({
+        where: buildPoolWhere({ id: leadId, teamId: actor.teamId }),
+        data: { agentId: req.user.id, status: POOL_STATUS },
+      });
+
+      if (!assigned.count) {
+        return res.status(409).json({ error: 'Lead is no longer available' });
+      }
+
+      const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+      res.json(lead);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to assign lead' });
+    }
+  });
+
+  // GET /api/leads/recontact (No-answer recontact queue)
+  app.get('/api/leads/recontact', authenticateToken, async (req, res) => {
+    const dueOnly = String(normalizeSingleQueryValue(req.query.dueOnly) || '0') === '1';
+    const where = { status: 'RECONTACT' };
+
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+      if (actor.role === 'TEAM_LEAD') {
+        where.teamId = actor.teamId || -1;
+      } else if (actor.role === 'SALES') {
+        where.teamId = actor.teamId || -1;
+        where.agentId = req.user.id;
+      }
+      if (dueOnly) {
+        where.nextRecontactAt = { lte: new Date() };
+      }
+
+      const leads = await prisma.lead.findMany({
+        where,
+        include: {
+          agent: { select: { id: true, name: true, email: true } },
+          team: { select: { id: true, name: true } },
+        },
+        orderBy: [{ nextRecontactAt: 'asc' }, { createdAt: 'desc' }],
+      });
+      return res.json(leads);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch recontact queue' });
+    }
+  });
+
+  // POST /api/leads/:id/recontact/schedule (Move no-answer lead to recontact queue)
+  app.post('/api/leads/:id/recontact/schedule', authenticateToken, async (req, res) => {
+    const leadId = parseInteger(req.params.id);
+    const nextContactAt = parseDateTime(req.body?.nextContactAt);
+    const notes = normalizeNullableString(req.body?.notes, 1000);
+
+    if (leadId === null) {
+      return res.status(400).json({ error: 'Invalid lead id' });
+    }
+    if (!nextContactAt) {
+      return res.status(400).json({ error: 'nextContactAt is required and must be a valid datetime' });
+    }
+
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+      const existingLead = await prisma.lead.findUnique({ where: { id: leadId } });
+      if (!existingLead) {
+        return res.status(404).json({ error: 'Lead not found' });
+      }
+      if (!canAccessLeadByScope({ actor, lead: existingLead, userId: req.user.id })) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+      if (!['NO_ANSWER', 'RECONTACT'].includes(existingLead.status)) {
+        return res.status(409).json({ error: 'Only NO_ANSWER/RECONTACT leads can be scheduled for recontact' });
+      }
+
+      const updatedLead = await prisma.lead.update({
+        where: { id: leadId },
+        data: {
+          status: 'RECONTACT',
+          nextRecontactAt: nextContactAt,
+          notes: notes || existingLead.notes,
+        },
+      });
+      return res.json(updatedLead);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to schedule recontact' });
+    }
+  });
+
+  // POST /api/leads/:id/recontact/complete (Complete one recontact attempt)
+  app.post('/api/leads/:id/recontact/complete', authenticateToken, async (req, res) => {
+    const leadId = parseInteger(req.params.id);
+    const outcome = typeof req.body?.outcome === 'string' ? req.body.outcome.trim().toUpperCase() : '';
+    const source = typeof req.body?.source === 'string' ? req.body.source.trim().toUpperCase() : 'CALL';
+    const notes = normalizeNullableString(req.body?.notes, 1000);
+    const scheduleNextAt = parseDateTime(req.body?.scheduleNextAt);
+
+    if (leadId === null) {
+      return res.status(400).json({ error: 'Invalid lead id' });
+    }
+    if (!LEAD_STATUSES.has(outcome) || outcome === 'RECONTACT') {
+      return res.status(400).json({ error: 'Invalid outcome' });
+    }
+    if (!['CALL', 'SEND'].includes(source)) {
+      return res.status(400).json({ error: 'Invalid source' });
+    }
+    if (outcome === 'NO_ANSWER' && !scheduleNextAt) {
+      return res.status(400).json({ error: 'scheduleNextAt is required when outcome is NO_ANSWER' });
+    }
+
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+      const existingLead = await prisma.lead.findUnique({ where: { id: leadId } });
+      if (!existingLead) {
+        return res.status(404).json({ error: 'Lead not found' });
+      }
+      if (!canAccessLeadByScope({ actor, lead: existingLead, userId: req.user.id })) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+      if (!['RECONTACT', 'NO_ANSWER'].includes(existingLead.status)) {
+        return res.status(409).json({ error: 'Lead is not in recontact workflow' });
+      }
+
+      const now = new Date();
+      const updated = await prisma.$transaction(async (tx) => {
+        const lead = await tx.lead.update({
+          where: { id: leadId },
+          data: {
+            status: outcome === 'NO_ANSWER' ? 'RECONTACT' : outcome,
+            nextRecontactAt: outcome === 'NO_ANSWER' ? scheduleNextAt : null,
+            lastRecontactAt: now,
+            recontactAttempts: { increment: 1 },
+            ...(notes ? { notes } : {}),
+          },
+        });
+
+        await tx.interaction.create({
+          data: {
+            leadId,
+            type: source === 'SEND' ? 'SEND' : 'CALL',
+            outcome,
+            notes: notes || null,
+          },
+        });
+
+        return lead;
+      });
+
+      return res.json(updated);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to complete recontact attempt' });
+    }
+  });
+
+  // GET /api/leads/:id (Lead details with access control)
+  app.get('/api/leads/:id', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    const leadId = parseInt(id);
+    if (Number.isNaN(leadId)) {
+      return res.status(400).json({ error: 'Invalid lead id' });
+    }
+
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+      const lead = await prisma.lead.findUnique({
+        where: { id: leadId },
+        include: { agent: { select: { id: true, name: true, email: true } } },
+      });
+
+      if (!lead) {
+        return res.status(404).json({ error: 'Lead not found' });
+      }
+
+      if (actor.role === 'SALES') {
+        if (lead.agentId !== req.user.id || lead.teamId !== actor.teamId) {
+          return res.status(403).json({ error: 'Access denied' });
+        }
+      } else if (actor.role === 'TEAM_LEAD') {
+        if (lead.teamId !== actor.teamId) {
+          return res.status(403).json({ error: 'Access denied' });
+        }
+      }
+
+      res.json(lead);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to fetch lead' });
+    }
+  });
+
+  // GET /api/leads (Scoped: Admin global, Team Lead team, Sales own)
+  app.get('/api/leads', authenticateToken, async (req, res) => {
+    const status = normalizeSingleQueryValue(req.query.status);
+    const source = normalizeSingleQueryValue(req.query.source);
+    const where = {};
+    if (status && status !== 'ALL') {
+      if (!LEAD_STATUSES.has(status)) {
+        return res.status(400).json({ error: 'Invalid status filter' });
+      }
+      where.status = status;
+    }
+    if (source) {
+      if (!LEAD_SOURCES.has(source)) {
+        return res.status(400).json({ error: 'Invalid source filter' });
+      }
+      where.source = source;
+    }
+
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+      if (actor.role === 'TEAM_LEAD') {
+        if (!actor.teamId) return res.status(400).json({ error: 'User is not assigned to a team' });
+        where.teamId = actor.teamId;
+      } else if (actor.role === 'SALES') {
+        if (!actor.teamId) return res.status(400).json({ error: 'User is not assigned to a team' });
+        where.teamId = actor.teamId;
+        where.agentId = req.user.id;
+      }
+
+      const leads = await prisma.lead.findMany({
+        where,
+        include: {
+          agent: { select: { name: true, email: true } },
+          course: true
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+      res.json(leads);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to fetch leads' });
+    }
+  });
+
+  // POST /api/leads (Manually add lead)
+  app.post('/api/leads', authenticateToken, async (req, res) => {
+    const { name, phone, status, source, notes, courseId, gender, whatsappPhone, teamId: rawTeamId } = req.body;
+    if (status && !LEAD_STATUSES.has(status)) {
+      return res.status(400).json({ error: 'Invalid status value' });
+    }
+    if (source && !LEAD_SOURCES.has(source)) {
+      return res.status(400).json({ error: 'Invalid source value' });
+    }
+    const normalizedGender = normalizeGender(gender);
+    if (!normalizedGender) {
+      return res.status(400).json({ error: 'Invalid gender value' });
+    }
+    const normalizedWhatsappPhone = normalizeEgyptMobile(whatsappPhone);
+    if (whatsappPhone && !normalizedWhatsappPhone) {
+      return res.status(400).json({ error: 'Invalid whatsappPhone value' });
+    }
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+
+      const effectiveStatus = status || 'NEW';
+      const effectiveSource = source || 'CALL';
+      const parsedCourseId = courseId ? parseInt(courseId, 10) : null;
+      const requestedTeamId = parseOptionalTeamId(rawTeamId);
+      const effectiveTeamId = actor.role === 'ADMIN' ? requestedTeamId : actor.teamId;
+      if (actor.role !== 'ADMIN' && !effectiveTeamId) {
+        return res.status(400).json({ error: 'teamId is required' });
+      }
+      if (effectiveTeamId) {
+        const team = await prisma.team.findUnique({ where: { id: effectiveTeamId }, select: { id: true } });
+        if (!team) {
+          return res.status(404).json({ error: 'Team not found' });
+        }
+      }
+
+      const lead = await prisma.$transaction(async (tx) => {
+        const createdLead = await tx.lead.create({
+          data: {
+            name,
+            phone,
+            gender: normalizedGender,
+            status: effectiveStatus,
+            source: effectiveSource,
+            notes,
+            agentId: req.user.id, // Auto-assign to creator
+            teamId: effectiveTeamId,
+            courseId: Number.isNaN(parsedCourseId) ? null : parsedCourseId,
+            whatsappPhone: normalizedWhatsappPhone,
+          },
+        });
+
+        // Sales and team leads manual lead creation should count toward today's outreach KPI.
+        // Pool imports are done through /api/leads/bulk and never create interactions.
+        if (req.user.role === 'SALES' || req.user.role === 'TEAM_LEAD') {
+          await tx.interaction.create({
+            data: {
+              leadId: createdLead.id,
+              type: effectiveSource === 'SEND' ? 'SEND' : 'CALL',
+              outcome: createdLead.status || null,
+              notes: createdLead.notes || null,
+            },
+          });
+        }
+
+        return createdLead;
+      });
+
+      res.status(201).json(lead);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to create lead', details: error.message });
+    }
+  });
+
+  // PUT /api/leads/:id (Update lead status/notes)
+  app.put('/api/leads/:id', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    const { name, status, notes, logCall, gender, whatsappPhone } = req.body;
+    const leadId = parseInt(id);
+    if (Number.isNaN(leadId)) {
+      return res.status(400).json({ error: 'Invalid lead id' });
+    }
+    if (status && !LEAD_STATUSES.has(status)) {
+      return res.status(400).json({ error: 'Invalid status value' });
+    }
+    if (typeof logCall !== 'undefined' && typeof logCall !== 'boolean') {
+      return res.status(400).json({ error: 'logCall must be boolean' });
+    }
+    const hasGender = Object.prototype.hasOwnProperty.call(req.body, 'gender');
+    const normalizedGender = hasGender ? normalizeGender(gender) : null;
+    if (hasGender && !normalizedGender) {
+      return res.status(400).json({ error: 'Invalid gender value' });
+    }
+    const hasWhatsappPhone = Object.prototype.hasOwnProperty.call(req.body, 'whatsappPhone');
+    const normalizedWhatsappPhone = hasWhatsappPhone ? normalizeEgyptMobile(whatsappPhone) : null;
+    if (hasWhatsappPhone && whatsappPhone && !normalizedWhatsappPhone) {
+      return res.status(400).json({ error: 'Invalid whatsappPhone value' });
+    }
+
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+      const existingLead = await prisma.lead.findUnique({ where: { id: leadId } });
+      if (!existingLead) {
+        return res.status(404).json({ error: 'Lead not found' });
+      }
+
+      if (actor.role === 'TEAM_LEAD') {
+        if (existingLead.teamId !== actor.teamId) {
+          return res.status(403).json({ error: 'Access denied' });
+        }
+      } else if (actor.role === 'SALES') {
+        if (existingLead.teamId !== actor.teamId || existingLead.agentId !== req.user.id) {
+          return res.status(403).json({ error: 'Access denied' });
+        }
+      }
+
+      const lead = await prisma.$transaction(async (tx) => {
+        const updatedLead = await tx.lead.update({
+          where: { id: leadId },
+          data: {
+            name,
+            status,
+            notes,
+            ...(hasGender ? { gender: normalizedGender } : {}),
+            ...(hasWhatsappPhone ? { whatsappPhone: normalizedWhatsappPhone } : {}),
+          }
+        });
+
+        if (logCall && (req.user.role === 'SALES' || req.user.role === 'TEAM_LEAD')) {
+          await tx.interaction.create({
+            data: {
+              leadId: leadId,
+              type: 'CALL',
+              outcome: status || null,
+              notes: notes || null,
+            },
+          });
+        }
+
+        return updatedLead;
+      });
+      res.json(lead);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to update lead' });
+    }
+  });
+
+  app.delete('/api/leads/:id', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const leadId = parseInteger(req.params.id);
+    if (leadId === null || leadId < 1) {
+      return res.status(400).json({ error: 'Invalid lead id' });
+    }
+
+    try {
+      const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { id: true } });
+      if (!lead) {
+        return res.status(404).json({ error: 'Lead not found' });
+      }
+
+      await prisma.$transaction(async (tx) => {
+        await tx.interaction.deleteMany({ where: { leadId } });
+        await tx.lead.delete({ where: { id: leadId } });
+      });
+
+      return res.json({ message: 'Lead deleted successfully' });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to delete lead' });
+    }
+  });
+
+  // GET /api/stats
+  app.get('/api/stats', authenticateToken, async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+
+      const where = {};
+      if (actor.role === 'TEAM_LEAD') {
+        if (!actor.teamId) return res.status(400).json({ error: 'User is not assigned to a team' });
+        where.teamId = actor.teamId;
+      } else if (actor.role === 'SALES') {
+        if (!actor.teamId) return res.status(400).json({ error: 'User is not assigned to a team' });
+        where.teamId = actor.teamId;
+        where.agentId = req.user.id;
+      }
+
+      const { start, end } = buildDayRange();
+      const customerWhere = { ...where, source: { not: POOL_SOURCE }, status: { notIn: ['NO_ANSWER', 'RECONTACT'] } };
+      const [total, agreed, hesitant, rejected, noAnswer, recontact] = await Promise.all([
+        prisma.lead.count({ where: customerWhere }),
+        prisma.lead.count({ where: { ...where, source: { not: POOL_SOURCE }, status: 'AGREED' } }),
+        prisma.lead.count({ where: { ...where, source: { not: POOL_SOURCE }, status: 'HESITANT' } }),
+        prisma.lead.count({ where: { ...where, source: { not: POOL_SOURCE }, status: 'REJECTED' } }),
+        prisma.lead.count({ where: { ...where, source: { not: POOL_SOURCE }, status: 'NO_ANSWER' } }),
+        prisma.lead.count({ where: { ...where, source: { not: POOL_SOURCE }, status: 'RECONTACT' } }),
+      ]);
+
+      // If Admin, also get pool count
+      let poolCount = 0;
+      let callsToday = 0;
+      let dailyCallTarget = null;
+      let teamMembersPerformance = [];
+      if (actor.role === 'ADMIN') {
+        poolCount = await prisma.lead.count({ where: buildPoolWhere() });
+      } else if (actor.role === 'SALES') {
+        const profile = await ensureEmployeeProfile(req.user.id);
+        dailyCallTarget = profile.dailyCallTarget;
+        callsToday = await prisma.interaction.count({
+          where: {
+            type: { in: ['CALL', 'SEND'] },
+            date: { gte: start, lt: end },
+            lead: { agentId: req.user.id },
+          },
+        });
+      } else if (actor.role === 'TEAM_LEAD') {
+        const teamMembers = await prisma.user.findMany({
+          where: { role: 'SALES', teamId: actor.teamId || -1 },
+          select: {
+            id: true,
+            employeeProfile: { select: { dailyCallTarget: true } },
+          },
+        });
+        const salesIds = teamMembers.map((member) => member.id);
+        dailyCallTarget = teamMembers.reduce((sum, member) => sum + (member.employeeProfile?.dailyCallTarget || 0), 0);
+        teamMembersPerformance = teamMembers.map((member) => ({
+          userId: member.id,
+          dailyCallTarget: member.employeeProfile?.dailyCallTarget || 0,
+        }));
+        callsToday = salesIds.length
+          ? await prisma.interaction.count({
+              where: {
+                type: { in: ['CALL', 'SEND'] },
+                date: { gte: start, lt: end },
+                lead: { agentId: { in: salesIds } },
+              },
+            })
+          : 0;
+        if (salesIds.length) {
+          const callsByAgent = await prisma.interaction.groupBy({
+            by: ['leadId'],
+            where: {
+              type: { in: ['CALL', 'SEND'] },
+              date: { gte: start, lt: end },
+              lead: { agentId: { in: salesIds } },
+            },
+            _count: { _all: true },
+          });
+          const leadIds = callsByAgent.map((item) => item.leadId);
+          const mappedLeads = leadIds.length
+            ? await prisma.lead.findMany({ where: { id: { in: leadIds } }, select: { id: true, agentId: true } })
+            : [];
+          const interactionByAgent = mappedLeads.reduce((acc, lead) => {
+            const leadMetric = callsByAgent.find((item) => item.leadId === lead.id)?._count?._all || 0;
+            if (lead.agentId) acc[lead.agentId] = (acc[lead.agentId] || 0) + leadMetric;
+            return acc;
+          }, {});
+          teamMembersPerformance = teamMembersPerformance.map((member) => ({
+            ...member,
+            callsToday: interactionByAgent[member.userId] || 0,
+          }));
+        }
+        poolCount = await prisma.lead.count({ where: buildPoolWhere({ teamId: actor.teamId }) });
+      }
+      const safeTotal = safeCount(total);
+      const safeAgreed = safeCount(agreed);
+      const safeHesitant = safeCount(hesitant);
+      const safeRejected = safeCount(rejected);
+      const safeNoAnswer = safeCount(noAnswer);
+      const safeRecontact = safeCount(recontact);
+      const safePoolCount = safeCount(poolCount);
+      const safeCallsToday = safeCount(callsToday);
+      const safeDailyCallTarget = Number.isFinite(dailyCallTarget) && dailyCallTarget > 0 ? dailyCallTarget : null;
+      const completionRate = safeDailyCallTarget
+        ? Math.min(100, Number(((safeCallsToday / safeDailyCallTarget) * 100).toFixed(2)))
+        : null;
+
+      res.json({
+        total: safeTotal,
+        agreed: safeAgreed,
+        hesitant: safeHesitant,
+        rejected: safeRejected,
+        noAnswer: safeNoAnswer,
+        recontact: safeRecontact,
+        poolCount: safePoolCount,
+        callsToday: safeCallsToday,
+        dailyCallTarget: safeDailyCallTarget,
+        byStatus: {
+          AGREED: safeAgreed,
+          HESITANT: safeHesitant,
+          REJECTED: safeRejected,
+          NO_ANSWER: safeNoAnswer,
+          RECONTACT: safeRecontact,
+        },
+        kpi: {
+          callsToday: safeCallsToday,
+          dailyCallTarget: safeDailyCallTarget,
+          remainingCalls: safeDailyCallTarget ? Math.max(0, safeDailyCallTarget - safeCallsToday) : null,
+          completionRate,
+        },
+        teamAnalytics: actor.role === 'TEAM_LEAD'
+          ? {
+              teamId: actor.teamId,
+              members: teamMembersPerformance,
+              membersCount: teamMembersPerformance.length,
+            }
+          : null,
+        scope: actor.role === 'ADMIN' ? 'GLOBAL' : actor.role === 'TEAM_LEAD' ? 'TEAM' : 'AGENT',
+        generatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to fetch stats' });
+    }
+  });
+
+  // GET /api/me/employee-profile
+  app.get('/api/me/employee-profile', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'SALES') {
+      return res.status(403).json({ error: 'Employee profile is available for sales agents only' });
+    }
+    try {
+      const profile = await ensureEmployeeProfile(req.user.id);
+      res.json(profile);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to fetch employee profile' });
+    }
+  });
+
+  // GET /api/users (Admin + Team Lead with scope)
+  app.get('/api/users', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+
+      const where = actor.role === 'TEAM_LEAD'
+        ? { teamId: actor.teamId || -1, role: 'SALES' }
+        : {};
+      const users = await prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          teamId: true,
+          team: { select: { id: true, name: true } },
+          employeeProfile: true,
+        }
+      });
+      res.json(users);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to fetch users' });
+    }
+  });
+
+  // GET /api/admin/employees (Admin + Team Lead scoped by team)
+  app.get('/api/admin/employees', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) {
+      return res.status(401).json({ error: 'Invalid user context' });
+    }
+    const search = normalizeSingleQueryValue(req.query.search);
+    const where = {
+      role: 'SALES',
+      ...(actor.role === 'TEAM_LEAD' ? { teamId: actor.teamId || -1 } : {}),
+      ...(typeof search === 'string' && search.trim()
+        ? {
+            OR: [
+              { name: { contains: search.trim() } },
+              { email: { contains: search.trim() } },
+            ],
+          }
+        : {}),
+    };
+
+    try {
+      const users = await prisma.user.findMany({
+        where,
+        include: { employeeProfile: true },
+        orderBy: { name: 'asc' },
+      });
+
+      const missingProfileIds = users
+        .filter((user) => !user.employeeProfile)
+        .map((user) => user.id);
+
+      if (missingProfileIds.length) {
+        await Promise.all(missingProfileIds.map((userId) => ensureEmployeeProfile(userId)));
+      }
+
+      const refreshedUsers = missingProfileIds.length
+        ? await prisma.user.findMany({
+            where,
+            include: { employeeProfile: true },
+            orderBy: { name: 'asc' },
+          })
+        : users;
+
+      const { start, end } = buildDayRange();
+      const agentIds = refreshedUsers.map((user) => user.id);
+      const calls = agentIds.length
+        ? await prisma.interaction.findMany({
+            where: {
+              type: 'CALL',
+              date: { gte: start, lt: end },
+              lead: { agentId: { in: agentIds } },
+            },
+            select: {
+              lead: {
+                select: { agentId: true },
+              },
+            },
+          })
+        : [];
+
+      const callsByAgent = calls.reduce((acc, interaction) => {
+        const agentId = interaction.lead?.agentId;
+        if (agentId) {
+          acc[agentId] = (acc[agentId] || 0) + 1;
+        }
+        return acc;
+      }, {});
+
+      const result = refreshedUsers.map((user) => ({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        teamId: user.teamId,
+        profile: user.employeeProfile,
+        callsToday: callsByAgent[user.id] || 0,
+      }));
+
+      res.json(result);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to fetch employee profiles' });
+    }
+  });
+
+  // PUT /api/admin/employees/:id/profile (Admin + Team Lead)
+  app.put('/api/admin/employees/:id/profile', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) {
+      return res.status(401).json({ error: 'Invalid user context' });
+    }
+
+    const userId = parseInteger(req.params.id);
+    if (userId === null || userId < 1) {
+      return res.status(400).json({ error: 'Invalid employee id' });
+    }
+
+    const { payload, errors } = buildEmployeeProfilePayload(req.body, { strictTarget: true });
+    if (errors.length) {
+      return res.status(400).json({ error: errors[0] });
+    }
+
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, role: true, teamId: true },
+      });
+
+      if (!user) {
+        return res.status(404).json({ error: 'Employee not found' });
+      }
+
+      if (user.role !== 'SALES') {
+        return res.status(400).json({ error: 'Profile can only be updated for sales agents' });
+      }
+      if (actor.role === 'TEAM_LEAD' && user.teamId !== actor.teamId) {
+        return res.status(403).json({ error: 'You can only update your team members' });
+      }
+
+      const profile = await prisma.employeeProfile.upsert({
+        where: { userId },
+        update: payload,
+        create: { userId, ...payload },
+      });
+
+      res.json(profile);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to update employee profile' });
+    }
+  });
+
+  // --- Template Routes ---
+
+  // GET /api/templates
+  app.get('/api/templates', authenticateToken, async (req, res) => {
+    try {
+      await Promise.all(
+        DEFAULT_TEMPLATES.map((template) =>
+          prisma.messageTemplate.upsert({
+            where: { status: template.status },
+            update: {},
+            create: template,
+          }),
+        ),
+      );
+      const templates = await prisma.messageTemplate.findMany();
+      res.json(templates);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to fetch templates' });
+    }
+  });
+
+  // PUT /api/templates/:id (Admin only)
+  app.put('/api/templates/:id', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const { id } = req.params;
+    const { content } = req.body;
+    try {
+      const template = await prisma.messageTemplate.update({
+        where: { id: parseInt(id) },
+        data: { content }
+      });
+      res.json(template);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to update template' });
+    }
+  });
+
+  app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+  });
+}
+
+startServer().catch(e => {
+  console.error('Failed to start server:', e);
+  process.exit(1);
+});
