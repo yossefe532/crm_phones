@@ -8,24 +8,35 @@ async function main() {
   const salesPassword = await bcrypt.hash('sales123', 10);
   const leadPassword = await bcrypt.hash('lead123', 10);
 
+  const ediconTenant = await prisma.tenant.upsert({
+    where: { slug: 'edicon' },
+    update: { name: 'Edicon' },
+    create: { name: 'Edicon', slug: 'edicon' },
+  });
+  const crmTenant = await prisma.tenant.upsert({
+    where: { slug: 'crm' },
+    update: { name: 'CRM' },
+    create: { name: 'CRM', slug: 'crm' },
+  });
+
   const cairoTeam = await prisma.team.upsert({
-    where: { name: 'Cairo Team' },
+    where: { tenantId_name: { tenantId: ediconTenant.id, name: 'Cairo Team' } },
     update: {},
-    create: { name: 'Cairo Team' },
+    create: { name: 'Cairo Team', tenantId: ediconTenant.id },
   });
   const alexTeam = await prisma.team.upsert({
-    where: { name: 'Alex Team' },
+    where: { tenantId_name: { tenantId: crmTenant.id, name: 'Alex Team' } },
     update: {},
-    create: { name: 'Alex Team' },
+    create: { name: 'Alex Team', tenantId: crmTenant.id },
   });
 
   const seedUsers = [
-    { email: 'admin@edicon.com', name: 'Admin User', password: adminPassword, role: 'ADMIN' },
-    { email: 'lead.cairo@edicon.com', name: 'Cairo Team Lead', password: leadPassword, role: 'TEAM_LEAD', teamId: cairoTeam.id },
-    { email: 'sales@edicon.com', name: 'Sales Agent', password: salesPassword, role: 'SALES', teamId: cairoTeam.id },
-    { email: 'admin@crm.com', name: 'Admin User', password: adminPassword, role: 'ADMIN' },
-    { email: 'lead.alex@crm.com', name: 'Alex Team Lead', password: leadPassword, role: 'TEAM_LEAD', teamId: alexTeam.id },
-    { email: 'sales@crm.com', name: 'Sales Agent', password: salesPassword, role: 'SALES', teamId: alexTeam.id },
+    { email: 'admin@edicon.com', name: 'Edicon Admin', password: adminPassword, role: 'ADMIN', tenantId: ediconTenant.id },
+    { email: 'lead.cairo@edicon.com', name: 'Cairo Team Lead', password: leadPassword, role: 'TEAM_LEAD', teamId: cairoTeam.id, tenantId: ediconTenant.id },
+    { email: 'sales@edicon.com', name: 'Sales Agent', password: salesPassword, role: 'SALES', teamId: cairoTeam.id, tenantId: ediconTenant.id },
+    { email: 'admin@crm.com', name: 'CRM Admin', password: adminPassword, role: 'ADMIN', tenantId: crmTenant.id },
+    { email: 'lead.alex@crm.com', name: 'Alex Team Lead', password: leadPassword, role: 'TEAM_LEAD', teamId: alexTeam.id, tenantId: crmTenant.id },
+    { email: 'sales@crm.com', name: 'Sales Agent', password: salesPassword, role: 'SALES', teamId: alexTeam.id, tenantId: crmTenant.id },
   ];
 
   const users = [];
@@ -37,6 +48,7 @@ async function main() {
         password: userData.password,
         role: userData.role,
         teamId: userData.teamId || null,
+        tenantId: userData.tenantId,
       },
       create: userData,
     });
@@ -84,9 +96,14 @@ async function main() {
 
   for (const t of defaultTemplates) {
     await prisma.messageTemplate.upsert({
-      where: { status: t.status },
+      where: { tenantId_status: { tenantId: ediconTenant.id, status: t.status } },
       update: {},
-      create: t,
+      create: { ...t, tenantId: ediconTenant.id },
+    });
+    await prisma.messageTemplate.upsert({
+      where: { tenantId_status: { tenantId: crmTenant.id, status: t.status } },
+      update: {},
+      create: { ...t, tenantId: crmTenant.id },
     });
   }
 

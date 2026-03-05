@@ -14,6 +14,7 @@ import clsx from 'clsx';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../store/useAuth';
 import { AUTO_MESSAGE_STATUSES, buildLeadTemplatePlaceholders, buildTemplateMessage, toWhatsAppNumber } from '../utils/whatsapp';
+import { assistantService } from '../services/assistant';
 
 const leadSchema = z.object({
   name: z.string().min(3, 'الاسم يجب أن يكون 3 أحرف على الأقل'),
@@ -65,6 +66,20 @@ export default function AddLead() {
   const [templates, setTemplates] = useState<StatusTemplate[]>([]);
   const [messageDraft, setMessageDraft] = useState('');
   const [isEditingMessage, setIsEditingMessage] = useState(false);
+  const [assistantTab, setAssistantTab] = useState<'TRAINING' | 'SCRIPT'>('SCRIPT');
+  const [trainingTopic, setTrainingTopic] = useState('');
+  const [trainingContext, setTrainingContext] = useState('');
+  const [trainingSaving, setTrainingSaving] = useState(false);
+  const [assistantLoading, setAssistantLoading] = useState(false);
+  const [assistantError, setAssistantError] = useState('');
+  const [assistantScript, setAssistantScript] = useState('');
+  const [followUpQuestions, setFollowUpQuestions] = useState<string[]>([]);
+  const [webInsights, setWebInsights] = useState<string[]>([]);
+  const [occupation, setOccupation] = useState('');
+  const [age, setAge] = useState('');
+  const [education, setEducation] = useState('');
+  const [goals, setGoals] = useState('');
+  const [nameDetectedHint, setNameDetectedHint] = useState('');
   const finalizedRef = useRef(false);
 
   const { register, handleSubmit, formState: { errors }, setValue, watch } = useForm<LeadForm>({
@@ -83,6 +98,14 @@ export default function AddLead() {
         setTemplates(templatesRes.data || []);
       } catch {
         setTemplates([]);
+      }
+      try {
+        const trainingRes = await assistantService.getTraining();
+        setTrainingTopic(trainingRes.topic || '');
+        setTrainingContext(trainingRes.context || '');
+      } catch {
+        setTrainingTopic('');
+        setTrainingContext('');
       }
 
       const claimId = Number(searchParams.get('claimId') || 0);
@@ -215,6 +238,7 @@ export default function AddLead() {
   const currentName = watch('name');
   const currentPhone = watch('phone');
   const currentWhatsappPhone = watch('whatsappPhone');
+  const currentNotes = watch('notes');
   const selectedTemplate = templates.find((t) => t.status === currentStatus);
   const previewMessage = useMemo(
     () =>
@@ -234,6 +258,67 @@ export default function AddLead() {
     setMessageDraft(previewMessage);
     setIsEditingMessage(false);
   }, [previewMessage]);
+
+  useEffect(() => {
+    if (currentName?.trim()) return;
+    if (!currentNotes?.trim() || currentNotes.trim().length < 8) return;
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const response = await assistantService.extractName(currentNotes);
+        if (response.extractedName && !currentName?.trim()) {
+          setValue('name', response.extractedName, { shouldValidate: true, shouldDirty: true });
+          setNameDetectedHint(`تم اكتشاف الاسم تلقائياً: ${response.extractedName}`);
+        }
+      } catch {
+        setNameDetectedHint('');
+      }
+    }, 700);
+    return () => window.clearTimeout(timeoutId);
+  }, [currentName, currentNotes, setValue]);
+
+  const handleSaveTraining = async () => {
+    setAssistantError('');
+    setTrainingSaving(true);
+    try {
+      const saved = await assistantService.saveTraining({
+        topic: trainingTopic,
+        context: trainingContext,
+      });
+      setTrainingTopic(saved.topic || '');
+      setTrainingContext(saved.context || '');
+    } catch (err: any) {
+      setAssistantError(err?.response?.data?.error || 'تعذر حفظ تدريب المساعد');
+    } finally {
+      setTrainingSaving(false);
+    }
+  };
+
+  const handleGenerateScript = async () => {
+    setAssistantError('');
+    setAssistantLoading(true);
+    try {
+      const response = await assistantService.generateScript({
+        leadName: currentName || '',
+        occupation,
+        age,
+        education,
+        goals,
+        notes: currentNotes || '',
+        trainingTopic,
+        trainingContext,
+        searchWeb: true,
+      });
+      setAssistantScript(response.script || '');
+      setFollowUpQuestions(response.followUpQuestions || []);
+      setWebInsights(response.webInsights || []);
+      if (!trainingTopic && response.trainingTopic) setTrainingTopic(response.trainingTopic);
+      if (!trainingContext && response.trainingContext) setTrainingContext(response.trainingContext);
+    } catch (err: any) {
+      setAssistantError(err?.response?.data?.error || 'تعذر توليد السكريبت الذكي');
+    } finally {
+      setAssistantLoading(false);
+    }
+  };
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">
@@ -434,6 +519,147 @@ export default function AddLead() {
             className="input-field min-h-[120px]"
             placeholder="أي تفاصيل أخرى..."
           />
+          {nameDetectedHint && (
+            <p className="text-xs text-indigo-600">{nameDetectedHint}</p>
+          )}
+        </div>
+
+        <div className="p-5 rounded-2xl border border-indigo-100 bg-indigo-50/50 space-y-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h4 className="text-lg font-bold text-indigo-900">المساعد الذكي للمكالمات</h4>
+              <p className="text-sm text-indigo-700">يتعلم من المجال العام ويولّد سكريبت مخصص لكل عميل.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setAssistantTab('SCRIPT')}
+                className={clsx(
+                  'px-3 py-2 rounded-lg text-sm font-bold transition-colors',
+                  assistantTab === 'SCRIPT' ? 'bg-indigo-600 text-white' : 'bg-white text-indigo-700 border border-indigo-200',
+                )}
+              >
+                توليد السكريبت
+              </button>
+              <button
+                type="button"
+                onClick={() => setAssistantTab('TRAINING')}
+                className={clsx(
+                  'px-3 py-2 rounded-lg text-sm font-bold transition-colors',
+                  assistantTab === 'TRAINING' ? 'bg-indigo-600 text-white' : 'bg-white text-indigo-700 border border-indigo-200',
+                )}
+              >
+                تدريب الذكاء
+              </button>
+            </div>
+          </div>
+
+          {assistantTab === 'TRAINING' ? (
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-700">الموضوع العام</label>
+                <input
+                  value={trainingTopic}
+                  onChange={(e) => setTrainingTopic(e.target.value)}
+                  className="input-field"
+                  placeholder="مثال: كورسات تسويق رقمي للمبتدئين"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-700">معلومات التدريب</label>
+                <textarea
+                  value={trainingContext}
+                  onChange={(e) => setTrainingContext(e.target.value)}
+                  className="input-field min-h-[120px]"
+                  placeholder="اكتب تفاصيل العرض، نوع العملاء، اعتراضات متوقعة، ونبرة الكلام المفضلة."
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleSaveTraining}
+                disabled={trainingSaving}
+                className="px-4 py-2 rounded-lg bg-indigo-600 text-white font-bold hover:bg-indigo-700 disabled:opacity-60"
+              >
+                {trainingSaving ? 'جارٍ حفظ التدريب...' : 'حفظ تدريب المساعد'}
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid md:grid-cols-2 gap-3">
+                <input
+                  value={occupation}
+                  onChange={(e) => setOccupation(e.target.value)}
+                  className="input-field"
+                  placeholder="الشغل الحالي"
+                />
+                <input
+                  value={age}
+                  onChange={(e) => setAge(e.target.value)}
+                  className="input-field"
+                  placeholder="السن"
+                />
+                <input
+                  value={education}
+                  onChange={(e) => setEducation(e.target.value)}
+                  className="input-field"
+                  placeholder="الدراسة أو المؤهل"
+                />
+                <input
+                  value={goals}
+                  onChange={(e) => setGoals(e.target.value)}
+                  className="input-field"
+                  placeholder="هدف العميل"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleGenerateScript}
+                disabled={assistantLoading}
+                className="px-4 py-2 rounded-lg bg-indigo-600 text-white font-bold hover:bg-indigo-700 disabled:opacity-60"
+              >
+                {assistantLoading ? 'جارٍ توليد السكريبت...' : 'توليد سكريبت ذكي الآن'}
+              </button>
+              {assistantScript && (
+                <div className="space-y-3">
+                  <div className="bg-white border border-indigo-100 rounded-xl p-4 whitespace-pre-wrap text-sm text-slate-700">
+                    {assistantScript}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void navigator.clipboard.writeText(assistantScript)}
+                    className="px-3 py-1.5 rounded-lg text-sm font-bold bg-slate-100 hover:bg-slate-200 text-slate-700"
+                  >
+                    نسخ السكريبت
+                  </button>
+                </div>
+              )}
+              {!!followUpQuestions.length && (
+                <div className="bg-white border border-indigo-100 rounded-xl p-4">
+                  <h5 className="font-bold text-indigo-900 mb-2">أسئلة ذكية مقترحة</h5>
+                  <ul className="space-y-1 text-sm text-slate-700">
+                    {followUpQuestions.map((question) => (
+                      <li key={question}>- {question}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {!!webInsights.length && (
+                <div className="bg-white border border-indigo-100 rounded-xl p-4">
+                  <h5 className="font-bold text-indigo-900 mb-2">معلومات من البحث</h5>
+                  <ul className="space-y-1 text-sm text-slate-700">
+                    {webInsights.map((insight) => (
+                      <li key={insight}>- {insight}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+          {assistantError && (
+            <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+              {assistantError}
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end pt-6 border-t border-slate-100">

@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "db:push": "prisma db push",
-    "test": "node tests/team-isolation.verify.mjs"
+    "test": "node tests/team-isolation.verify.mjs",
+    "test:tenant": "node tests/tenant-isolation.verify.mjs"
   },
   "keywords": [],
   "author": "",

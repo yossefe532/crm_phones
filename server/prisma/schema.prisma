@@ -17,12 +17,15 @@ model User {
   email           String           @unique
   password        String
   role            String           // ADMIN, TEAM_LEAD, SALES
+  tenantId        Int
+  tenant          Tenant           @relation(fields: [tenantId], references: [id])
   teamId          Int?
   team            Team?            @relation(fields: [teamId], references: [id])
   leads           Lead[]
   employeeProfile EmployeeProfile?
   managedTeam     Team?            @relation("TeamLead")
 
+  @@index([tenantId])
   @@index([teamId])
 }
 
@@ -38,6 +41,8 @@ model Lead {
   recontactAttempts Int      @default(0)
   nextRecontactAt DateTime?
   lastRecontactAt DateTime?
+  tenantId     Int
+  tenant       Tenant        @relation(fields: [tenantId], references: [id])
   agentId      Int?
   agent        User?         @relation(fields: [agentId], references: [id])
   teamId       Int?
@@ -47,6 +52,7 @@ model Lead {
   createdAt    DateTime      @default(now())
   interactions Interaction[]
 
+  @@index([tenantId])
   @@index([teamId])
   @@index([status])
   @@index([nextRecontactAt])
@@ -70,9 +76,14 @@ model Interaction {
 }
 
 model MessageTemplate {
-  id      Int    @id @default(autoincrement())
-  status  String @unique // AGREED, REJECTED, HESITANT, SPONSOR
-  content String
+  id        Int    @id @default(autoincrement())
+  status    String // AGREED, REJECTED, HESITANT, SPONSOR
+  content   String
+  tenantId  Int
+  tenant    Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, status])
+  @@index([tenantId])
 }
 
 model EmployeeProfile {
@@ -91,11 +102,28 @@ model EmployeeProfile {
 
 model Team {
   id          Int      @id @default(autoincrement())
-  name        String   @unique
+  name        String
+  tenantId    Int
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
   leadId      Int?     @unique
   lead        User?    @relation("TeamLead", fields: [leadId], references: [id], onDelete: SetNull)
   users       User[]
   leads       Lead[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model Tenant {
+  id               Int               @id @default(autoincrement())
+  name             String            @unique
+  slug             String            @unique
+  users            User[]
+  teams            Team[]
+  leads            Lead[]
+  messageTemplates MessageTemplate[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
 }

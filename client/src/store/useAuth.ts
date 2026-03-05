@@ -7,6 +7,7 @@ interface User {
   name: string;
   email: string;
   role: 'ADMIN' | 'TEAM_LEAD' | 'SALES';
+  tenantId: number | null;
   teamId: number | null;
 }
 
@@ -48,7 +49,14 @@ export const useAuth = create<AuthState>((set) => ({
           delete api.defaults.headers.common['Authorization'];
         } else {
           set({ 
-            user: { id: decoded.id, name: decoded.name, email: decoded.email, role: decoded.role, teamId: decoded.teamId ?? null }, 
+            user: {
+              id: decoded.id,
+              name: decoded.name,
+              email: decoded.email,
+              role: decoded.role,
+              tenantId: decoded.tenantId ?? null,
+              teamId: decoded.teamId ?? null,
+            }, 
             token, 
             isAuthenticated: true 
           });

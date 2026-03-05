@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 
@@ -33,6 +33,7 @@ const DEFAULT_TEMPLATES = [
 ];
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '';
 const allowedOrigins = CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean);
+const ASSISTANT_TRAINING_FILE = join(__dirname, 'assistant-training.json');
 
 app.use(cors({
   origin: allowedOrigins.length ? allowedOrigins : true,
@@ -118,11 +119,20 @@ const parseOptionalTeamId = (value) => {
   return parsed && parsed > 0 ? parsed : null;
 };
 
+const assertTenantScopedUser = (user) => {
+  if (!user?.tenantId) {
+    return 'User is not assigned to a tenant';
+  }
+  return null;
+};
+
 const getCurrentUserScope = async (userId) => prisma.user.findUnique({
   where: { id: userId },
   select: {
     id: true,
     role: true,
+    tenantId: true,
+    tenant: { select: { id: true, name: true, slug: true } },
     teamId: true,
     team: { select: { id: true, name: true } },
   },
@@ -133,6 +143,168 @@ const normalizeNullableString = (value, maxLength = 120) => {
   const trimmed = value.trim();
   if (!trimmed) return null;
   return trimmed.slice(0, maxLength);
+};
+
+const readAssistantTraining = () => {
+  try {
+    if (!existsSync(ASSISTANT_TRAINING_FILE)) return {};
+    const parsed = JSON.parse(readFileSync(ASSISTANT_TRAINING_FILE, 'utf-8'));
+    if (!parsed || typeof parsed !== 'object') return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+};
+
+const writeAssistantTraining = (payload) => {
+  try {
+    writeFileSync(ASSISTANT_TRAINING_FILE, JSON.stringify(payload, null, 2), 'utf-8');
+  } catch {
+    return null;
+  }
+  return true;
+};
+
+const extractNameFromTranscript = (transcript) => {
+  if (typeof transcript !== 'string') return null;
+  const text = transcript.replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  const patterns = [
+    /(?:اسمي|انا اسمي|أنا اسمي|معاك|مع حضرتك)\s+([ء-يA-Za-z]{2,}(?:\s+[ء-يA-Za-z]{2,}){0,2})/i,
+    /(?:my name is|this is|i am)\s+([A-Za-z]{2,}(?:\s+[A-Za-z]{2,}){0,2})/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) {
+      return match[1].trim();
+    }
+  }
+  const words = text.split(/[.,،!?]/)[0]?.trim().split(' ').filter(Boolean) || [];
+  if (words.length >= 2 && words.length <= 3) {
+    const candidate = words.join(' ');
+    if (!/[0-9]/.test(candidate) && candidate.length >= 5) return candidate;
+  }
+  return null;
+};
+
+const buildFollowUpQuestions = ({ occupation, age, education, goals }) => {
+  const questions = [];
+  if (!occupation) questions.push('الشخص ده شغال في ايه حالياً؟');
+  if (!age) questions.push('عمره كام تقريباً؟');
+  if (!education) questions.push('بيدرس ايه أو مؤهله الدراسي ايه؟');
+  if (!goals) questions.push('ايه أهم هدف عايز يوصله من الخدمة؟');
+  questions.push('إيه أكبر مشكلة حالياً وعايز يحلها بسرعة؟');
+  questions.push('الوقت المناسب للمتابعة امتى؟');
+  return questions.slice(0, 6);
+};
+
+const fetchJsonWithTimeout = async (url, options = {}, timeoutMs = 3000) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+const fetchWebInsights = async (query) => {
+  const normalizedQuery = normalizeNullableString(query, 180);
+  if (!normalizedQuery) return [];
+  const encoded = encodeURIComponent(normalizedQuery);
+  const result = await fetchJsonWithTimeout(`https://api.duckduckgo.com/?q=${encoded}&format=json&no_html=1&skip_disambig=1`, {}, 2500);
+  if (!result) return [];
+  const insights = [];
+  if (typeof result.AbstractText === 'string' && result.AbstractText.trim()) {
+    insights.push(result.AbstractText.trim());
+  }
+  if (Array.isArray(result.RelatedTopics)) {
+    for (const topic of result.RelatedTopics) {
+      if (insights.length >= 3) break;
+      if (typeof topic?.Text === 'string' && topic.Text.trim()) {
+        insights.push(topic.Text.trim());
+      }
+    }
+  }
+  return insights.slice(0, 3);
+};
+
+const buildFallbackScript = ({ leadName, trainingTopic, trainingContext, occupation, age, education, goals, notes, webInsights }) => {
+  const customerName = leadName || 'أستاذ العميل';
+  const intro = `السلام عليكم ${customerName}، معاك فريق المبيعات.`;
+  const profileLine = [
+    occupation ? `طبيعة الشغل: ${occupation}` : null,
+    age ? `السن: ${age}` : null,
+    education ? `الخلفية التعليمية: ${education}` : null,
+  ].filter(Boolean).join(' | ');
+  const trainingLine = [trainingTopic, trainingContext].filter(Boolean).join(' - ');
+  const goalLine = goals ? `الهدف الأساسي للعميل: ${goals}.` : 'هنحدد الهدف الرئيسي مع العميل في بداية المكالمة.';
+  const notesLine = notes ? `ملاحظات من السيلز: ${notes}.` : 'لا توجد ملاحظات إضافية حالياً.';
+  const webLine = webInsights.length
+    ? `معلومة سريعة من البحث: ${webInsights[0]}`
+    : 'مفيش نتائج بحث مؤكدة حالياً، اسأل العميل عن التفاصيل المباشرة.';
+  const profileSection = profileLine ? `\n- ${profileLine}` : '';
+  const trainingSection = trainingLine ? `\n- سياق التدريب: ${trainingLine}` : '';
+  return `${intro}
+ابدأ بالسؤال عن احتياجه الحالي ثم استخدم الخطوات التالية:
+- كسر الجليد: ممكن تحكيلي بسرعة عن هدفك الأساسي الفترة دي؟
+${goalLine}
+${notesLine}
+${webLine}${profileSection}${trainingSection}
+- اقترح الحل المناسب حسب مستوى العميل ووقته.
+- انهي المكالمة بخطوة واضحة: تحديد متابعة أو إرسال عرض مختصر على واتساب.`;
+};
+
+const generateScriptWithModel = async ({ leadName, trainingTopic, trainingContext, occupation, age, education, goals, notes, webInsights }) => {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return buildFallbackScript({ leadName, trainingTopic, trainingContext, occupation, age, education, goals, notes, webInsights });
+  }
+
+  const prompt = `انت مساعد مبيعات عربي محترف. اكتب سكريبت مكالمة سريع وواضح باللهجة المصرية.
+الاسم: ${leadName || 'غير متاح'}
+المجال العام: ${trainingTopic || 'عام'}
+سياق التدريب: ${trainingContext || 'غير متاح'}
+الوظيفة: ${occupation || 'غير معروفة'}
+السن: ${age || 'غير معروف'}
+الدراسة: ${education || 'غير معروفة'}
+الهدف: ${goals || 'غير معروف'}
+ملاحظات: ${notes || 'لا يوجد'}
+نتائج بحث: ${webInsights.join(' | ') || 'لا يوجد'}
+المطلوب:
+1) افتتاحية.
+2) 5 اسئلة استكشاف.
+3) طريقة عرض الحل.
+4) اغلاق المكالمة بخطوة متابعة واضحة.
+اكتب بالعربية فقط وبشكل عملي.`;
+
+  const response = await fetchJsonWithTimeout(
+    'https://api.openai.com/v1/chat/completions',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        temperature: 0.4,
+        messages: [
+          { role: 'system', content: 'You are a practical Arabic sales call script writer.' },
+          { role: 'user', content: prompt },
+        ],
+      }),
+    },
+    8000,
+  );
+
+  const script = response?.choices?.[0]?.message?.content;
+  if (typeof script === 'string' && script.trim()) return script.trim();
+  return buildFallbackScript({ leadName, trainingTopic, trainingContext, occupation, age, education, goals, notes, webInsights });
 };
 
 const buildEmployeeProfilePayload = (input = {}, { strictTarget = false } = {}) => {
@@ -204,6 +376,7 @@ const safeCount = (value) => (Number.isFinite(value) && value >= 0 ? value : 0);
 
 const canAccessLeadByScope = ({ actor, lead, userId }) => {
   if (!actor || !lead) return false;
+  if (!actor.tenantId || lead.tenantId !== actor.tenantId) return false;
   if (actor.role === 'ADMIN') return true;
   if (actor.role === 'TEAM_LEAD') return lead.teamId === actor.teamId;
   if (actor.role === 'SALES') return lead.teamId === actor.teamId && lead.agentId === userId;
@@ -281,6 +454,7 @@ async function startServer() {
         email: user.email,
         role: user.role,
         name: user.name,
+        tenantId: user.tenantId || null,
         teamId: user.teamId || null,
       }, JWT_SECRET, { expiresIn: '8h' });
       res.json({
@@ -290,6 +464,7 @@ async function startServer() {
           name: user.name,
           email: user.email,
           role: user.role,
+          tenantId: user.tenantId || null,
           teamId: user.teamId || null,
         },
       });
@@ -304,6 +479,10 @@ async function startServer() {
     const actor = await getCurrentUserScope(req.user.id);
     if (!actor) {
       return res.status(401).json({ error: 'Invalid user context' });
+    }
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) {
+      return res.status(400).json({ error: actorTenantError });
     }
 
     const { name, email, password, role, employeeProfile, teamId: rawTeamId } = req.body;
@@ -358,7 +537,10 @@ async function startServer() {
       }
 
       if (effectiveTeamId) {
-        const team = await prisma.team.findUnique({ where: { id: effectiveTeamId }, select: { id: true } });
+        const team = await prisma.team.findFirst({
+          where: { id: effectiveTeamId, tenantId: actor.tenantId },
+          select: { id: true },
+        });
         if (!team) {
           return res.status(404).json({ error: 'Team not found' });
         }
@@ -377,6 +559,7 @@ async function startServer() {
           email: normalizedEmail,
           password: hashedPassword,
           role: normalizedRole,
+          tenantId: actor.tenantId,
           teamId: effectiveTeamId,
           ...(normalizedRole === 'SALES'
             ? {
@@ -420,9 +603,18 @@ async function startServer() {
     }
 
     try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
       const team = await prisma.team.create({
         data: {
           name: teamName,
+          tenantId: actor.tenantId,
         },
       select: { id: true, name: true, createdAt: true, updatedAt: true },
       });
@@ -444,8 +636,14 @@ async function startServer() {
       if (!actor) {
         return res.status(401).json({ error: 'Invalid user context' });
       }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
 
-      const where = actor.role === 'ADMIN' ? {} : { id: actor.teamId || -1 };
+      const where = actor.role === 'ADMIN'
+        ? { tenantId: actor.tenantId }
+        : { id: actor.teamId || -1, tenantId: actor.tenantId };
       const teams = await prisma.team.findMany({
         where,
         include: {
@@ -471,8 +669,17 @@ async function startServer() {
     }
 
     try {
-      const team = await prisma.team.findUnique({
-        where: { id: teamId },
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
+
+      const team = await prisma.team.findFirst({
+        where: { id: teamId, tenantId: actor.tenantId },
         select: { id: true, name: true },
       });
       if (!team) {
@@ -481,9 +688,9 @@ async function startServer() {
 
       await prisma.$transaction(async (tx) => {
         await tx.interaction.deleteMany({ where: { lead: { teamId } } });
-        await tx.lead.deleteMany({ where: { teamId } });
-        await tx.employeeProfile.deleteMany({ where: { user: { teamId } } });
-        await tx.user.deleteMany({ where: { teamId } });
+        await tx.lead.deleteMany({ where: { teamId, tenantId: actor.tenantId } });
+        await tx.employeeProfile.deleteMany({ where: { user: { teamId, tenantId: actor.tenantId } } });
+        await tx.user.deleteMany({ where: { teamId, tenantId: actor.tenantId } });
         await tx.team.delete({ where: { id: teamId } });
       });
 
@@ -499,12 +706,18 @@ async function startServer() {
     if (!actor) {
       return res.status(401).json({ error: 'Invalid user context' });
     }
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) {
+      return res.status(400).json({ error: actorTenantError });
+    }
     if (actor.role === 'TEAM_LEAD' && !actor.teamId) {
       return res.status(400).json({ error: 'User is not assigned to a team' });
     }
 
     try {
-      const where = actor.role === 'ADMIN' ? {} : { id: actor.teamId };
+      const where = actor.role === 'ADMIN'
+        ? { tenantId: actor.tenantId }
+        : { id: actor.teamId, tenantId: actor.tenantId };
       const teams = await prisma.team.findMany({
         where,
         orderBy: { name: 'asc' },
@@ -586,8 +799,16 @@ async function startServer() {
     }
 
     try {
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
+      const user = await prisma.user.findFirst({
+        where: { id: userId, tenantId: actor.tenantId },
         select: { id: true, role: true, teamId: true },
       });
       if (!user) {
@@ -634,6 +855,10 @@ async function startServer() {
     if (!actor) {
       return res.status(401).json({ error: 'Invalid user context' });
     }
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) {
+      return res.status(400).json({ error: actorTenantError });
+    }
 
     const { name, email, password, role, employeeProfile, teamId: rawTeamId } = req.body;
     const normalizedName = normalizeNullableString(name, 120);
@@ -671,7 +896,10 @@ async function startServer() {
       if (!effectiveTeamId) {
         return res.status(400).json({ error: 'Team is required' });
       }
-      const team = await prisma.team.findUnique({ where: { id: effectiveTeamId }, select: { id: true } });
+      const team = await prisma.team.findFirst({
+        where: { id: effectiveTeamId, tenantId: actor.tenantId },
+        select: { id: true },
+      });
       if (!team) {
         return res.status(404).json({ error: 'Team not found' });
       }
@@ -689,6 +917,7 @@ async function startServer() {
           email: normalizedEmail,
           password: hashedPassword,
           role: normalizedRole,
+          tenantId: actor.tenantId,
           teamId: effectiveTeamId,
           ...(normalizedRole === 'SALES'
             ? {
@@ -728,11 +957,18 @@ async function startServer() {
       if (!actor) {
         return res.status(401).json({ error: 'Invalid user context' });
       }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
       if (userId === req.user.id) {
         return res.status(400).json({ error: 'Cannot delete current account' });
       }
 
-      const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true, teamId: true } });
+      const user = await prisma.user.findFirst({
+        where: { id: userId, tenantId: actor.tenantId },
+        select: { id: true, role: true, teamId: true },
+      });
       if (!user) {
         return res.status(404).json({ error: 'User not found' });
       }
@@ -749,7 +985,7 @@ async function startServer() {
 
       await prisma.$transaction(async (tx) => {
         await tx.lead.updateMany({
-          where: { agentId: userId },
+          where: { agentId: userId, tenantId: actor.tenantId },
           data: { agentId: null, source: POOL_SOURCE, status: POOL_STATUS },
         });
         await tx.user.delete({ where: { id: userId } });
@@ -769,6 +1005,10 @@ async function startServer() {
     const actor = await getCurrentUserScope(req.user.id);
     if (!actor) {
       return res.status(401).json({ error: 'Invalid user context' });
+    }
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) {
+      return res.status(400).json({ error: actorTenantError });
     }
 
     const { leads, teamId: rawTeamId, uploadScope } = req.body;
@@ -805,7 +1045,10 @@ async function startServer() {
         if (!requestedTeamId) {
           return res.status(400).json({ error: 'teamId is required for team upload' });
         }
-        const team = await prisma.team.findUnique({ where: { id: requestedTeamId }, select: { id: true } });
+        const team = await prisma.team.findFirst({
+          where: { id: requestedTeamId, tenantId: actor.tenantId },
+          select: { id: true },
+        });
         if (!team) {
           return res.status(404).json({ error: 'Team not found' });
         }
@@ -828,6 +1071,7 @@ async function startServer() {
                   source: POOL_SOURCE,
                   agentId: null,
                   teamId: null,
+                  tenantId: actor.tenantId,
                 },
               });
               count++;
@@ -848,6 +1092,7 @@ async function startServer() {
                     source: POOL_SOURCE,
                     agentId: null,
                     teamId,
+                    tenantId: actor.tenantId,
                   },
                 });
                 count++;
@@ -868,9 +1113,18 @@ async function startServer() {
 
   // GET /api/admin/pooled-numbers (Admin only)
   app.get('/api/admin/pooled-numbers', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) {
+      return res.status(401).json({ error: 'Invalid user context' });
+    }
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) {
+      return res.status(400).json({ error: actorTenantError });
+    }
     const teamId = parseOptionalTeamId(normalizeSingleQueryValue(req.query.teamId));
     const search = normalizeSingleQueryValue(req.query.search);
     const where = buildPoolWhere({
+      tenantId: actor.tenantId,
       ...(teamId ? { teamId } : {}),
       ...(typeof search === 'string' && search.trim()
         ? {
@@ -901,12 +1155,21 @@ async function startServer() {
   });
 
   app.delete('/api/admin/pooled-numbers', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) {
+      return res.status(401).json({ error: 'Invalid user context' });
+    }
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) {
+      return res.status(400).json({ error: actorTenantError });
+    }
     const teamId = parseOptionalTeamId(req.body?.teamId);
     const search = normalizeNullableString(req.body?.search, 120);
     const mode = typeof req.body?.mode === 'string' ? req.body.mode.trim().toUpperCase() : 'ALL';
     const count = parseInteger(req.body?.count);
     const sort = typeof req.body?.sort === 'string' ? req.body.sort.trim().toUpperCase() : 'OLDEST';
     const where = buildPoolWhere({
+      tenantId: actor.tenantId,
       ...(teamId ? { teamId } : {}),
       ...(search
         ? {
@@ -963,6 +1226,10 @@ async function startServer() {
     if (!actor) {
       return res.status(401).json({ error: 'Invalid user context' });
     }
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) {
+      return res.status(400).json({ error: actorTenantError });
+    }
     const actorTeamError = assertTeamScopedUser(actor);
     if (actorTeamError) {
       return res.status(400).json({ error: actorTeamError });
@@ -973,6 +1240,7 @@ async function startServer() {
       // Guard against race conditions: find candidate then conditionally claim it.
       const maxAttempts = 5;
       const claimScope = buildPoolWhere({
+        tenantId: actor.tenantId,
         OR: [
           { teamId: actor.teamId },
           { teamId: null },
@@ -991,7 +1259,7 @@ async function startServer() {
         if (!lead) return res.status(404).json({ error: 'No leads available in pool' });
 
         const claimed = await prisma.lead.updateMany({
-          where: buildPoolWhere({ id: lead.id, teamId: lead.teamId ?? null }),
+          where: buildPoolWhere({ id: lead.id, teamId: lead.teamId ?? null, tenantId: actor.tenantId }),
           data: { agentId: userId, status: POOL_STATUS, teamId: actor.teamId },
         });
 
@@ -1045,6 +1313,10 @@ async function startServer() {
     if (!actor) {
       return res.status(401).json({ error: 'Invalid user context' });
     }
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) {
+      return res.status(400).json({ error: actorTenantError });
+    }
     const actorTeamError = assertTeamScopedUser(actor);
     if (actorTeamError) {
       return res.status(400).json({ error: actorTeamError });
@@ -1057,7 +1329,12 @@ async function startServer() {
         return res.status(404).json({ error: 'Lead not found' });
       }
 
-      if (existingLead.source !== POOL_SOURCE || existingLead.agentId !== req.user.id || existingLead.teamId !== actor.teamId) {
+      if (
+        existingLead.tenantId !== actor.tenantId
+        || existingLead.source !== POOL_SOURCE
+        || existingLead.agentId !== req.user.id
+        || existingLead.teamId !== actor.teamId
+      ) {
         return res.status(403).json({ error: 'Lead is not claimed by current user' });
       }
 
@@ -1125,6 +1402,10 @@ async function startServer() {
     if (!actor) {
       return res.status(401).json({ error: 'Invalid user context' });
     }
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) {
+      return res.status(400).json({ error: actorTenantError });
+    }
     const actorTeamError = assertTeamScopedUser(actor);
     if (actorTeamError) {
       return res.status(400).json({ error: actorTeamError });
@@ -1132,7 +1413,14 @@ async function startServer() {
 
     try {
       const released = await prisma.lead.updateMany({
-        where: { id: leadId, teamId: actor.teamId, source: POOL_SOURCE, status: POOL_STATUS, agentId: req.user.id },
+        where: {
+          id: leadId,
+          teamId: actor.teamId,
+          tenantId: actor.tenantId,
+          source: POOL_SOURCE,
+          status: POOL_STATUS,
+          agentId: req.user.id,
+        },
         data: { agentId: null },
       });
       if (!released.count) {
@@ -1155,6 +1443,10 @@ async function startServer() {
     if (!actor) {
       return res.status(401).json({ error: 'Invalid user context' });
     }
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) {
+      return res.status(400).json({ error: actorTenantError });
+    }
     const actorTeamError = assertTeamScopedUser(actor);
     if (actorTeamError) {
       return res.status(400).json({ error: actorTeamError });
@@ -1162,7 +1454,7 @@ async function startServer() {
 
     try {
       const leads = await prisma.lead.findMany({
-        where: buildPoolWhere({ teamId: actor.teamId }),
+        where: buildPoolWhere({ teamId: actor.teamId, tenantId: actor.tenantId }),
         orderBy: { createdAt: 'asc' },
       });
       res.json(leads);
@@ -1188,6 +1480,10 @@ async function startServer() {
     if (!actor) {
       return res.status(401).json({ error: 'Invalid user context' });
     }
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) {
+      return res.status(400).json({ error: actorTenantError });
+    }
     const actorTeamError = assertTeamScopedUser(actor);
     if (actorTeamError) {
       return res.status(400).json({ error: actorTeamError });
@@ -1195,7 +1491,7 @@ async function startServer() {
 
     try {
       const assigned = await prisma.lead.updateMany({
-        where: buildPoolWhere({ id: leadId, teamId: actor.teamId }),
+        where: buildPoolWhere({ id: leadId, teamId: actor.teamId, tenantId: actor.tenantId }),
         data: { agentId: req.user.id, status: POOL_STATUS },
       });
 
@@ -1221,6 +1517,11 @@ async function startServer() {
       if (!actor) {
         return res.status(401).json({ error: 'Invalid user context' });
       }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
+      where.tenantId = actor.tenantId;
       if (actor.role === 'TEAM_LEAD') {
         where.teamId = actor.teamId || -1;
       } else if (actor.role === 'SALES') {
@@ -1372,6 +1673,10 @@ async function startServer() {
       if (!actor) {
         return res.status(401).json({ error: 'Invalid user context' });
       }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
       const lead = await prisma.lead.findUnique({
         where: { id: leadId },
         include: { agent: { select: { id: true, name: true, email: true } } },
@@ -1381,14 +1686,8 @@ async function startServer() {
         return res.status(404).json({ error: 'Lead not found' });
       }
 
-      if (actor.role === 'SALES') {
-        if (lead.agentId !== req.user.id || lead.teamId !== actor.teamId) {
-          return res.status(403).json({ error: 'Access denied' });
-        }
-      } else if (actor.role === 'TEAM_LEAD') {
-        if (lead.teamId !== actor.teamId) {
-          return res.status(403).json({ error: 'Access denied' });
-        }
+      if (!canAccessLeadByScope({ actor, lead, userId: req.user.id })) {
+        return res.status(403).json({ error: 'Access denied' });
       }
 
       res.json(lead);
@@ -1421,6 +1720,11 @@ async function startServer() {
       if (!actor) {
         return res.status(401).json({ error: 'Invalid user context' });
       }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
+      where.tenantId = actor.tenantId;
       if (actor.role === 'TEAM_LEAD') {
         if (!actor.teamId) return res.status(400).json({ error: 'User is not assigned to a team' });
         where.teamId = actor.teamId;
@@ -1467,6 +1771,10 @@ async function startServer() {
       if (!actor) {
         return res.status(401).json({ error: 'Invalid user context' });
       }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
 
       const effectiveStatus = status || 'NEW';
       const effectiveSource = source || 'CALL';
@@ -1477,7 +1785,10 @@ async function startServer() {
         return res.status(400).json({ error: 'teamId is required' });
       }
       if (effectiveTeamId) {
-        const team = await prisma.team.findUnique({ where: { id: effectiveTeamId }, select: { id: true } });
+        const team = await prisma.team.findFirst({
+          where: { id: effectiveTeamId, tenantId: actor.tenantId },
+          select: { id: true },
+        });
         if (!team) {
           return res.status(404).json({ error: 'Team not found' });
         }
@@ -1494,6 +1805,7 @@ async function startServer() {
             notes,
             agentId: req.user.id, // Auto-assign to creator
             teamId: effectiveTeamId,
+            tenantId: actor.tenantId,
             courseId: Number.isNaN(parsedCourseId) ? null : parsedCourseId,
             whatsappPhone: normalizedWhatsappPhone,
           },
@@ -1552,19 +1864,17 @@ async function startServer() {
       if (!actor) {
         return res.status(401).json({ error: 'Invalid user context' });
       }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
       const existingLead = await prisma.lead.findUnique({ where: { id: leadId } });
       if (!existingLead) {
         return res.status(404).json({ error: 'Lead not found' });
       }
 
-      if (actor.role === 'TEAM_LEAD') {
-        if (existingLead.teamId !== actor.teamId) {
-          return res.status(403).json({ error: 'Access denied' });
-        }
-      } else if (actor.role === 'SALES') {
-        if (existingLead.teamId !== actor.teamId || existingLead.agentId !== req.user.id) {
-          return res.status(403).json({ error: 'Access denied' });
-        }
+      if (!canAccessLeadByScope({ actor, lead: existingLead, userId: req.user.id })) {
+        return res.status(403).json({ error: 'Access denied' });
       }
 
       const lead = await prisma.$transaction(async (tx) => {
@@ -1606,7 +1916,18 @@ async function startServer() {
     }
 
     try {
-      const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { id: true } });
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
+      const lead = await prisma.lead.findFirst({
+        where: { id: leadId, tenantId: actor.tenantId },
+        select: { id: true },
+      });
       if (!lead) {
         return res.status(404).json({ error: 'Lead not found' });
       }
@@ -1630,8 +1951,12 @@ async function startServer() {
       if (!actor) {
         return res.status(401).json({ error: 'Invalid user context' });
       }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
 
-      const where = {};
+      const where = { tenantId: actor.tenantId };
       if (actor.role === 'TEAM_LEAD') {
         if (!actor.teamId) return res.status(400).json({ error: 'User is not assigned to a team' });
         where.teamId = actor.teamId;
@@ -1658,7 +1983,7 @@ async function startServer() {
       let dailyCallTarget = null;
       let teamMembersPerformance = [];
       if (actor.role === 'ADMIN') {
-        poolCount = await prisma.lead.count({ where: buildPoolWhere() });
+        poolCount = await prisma.lead.count({ where: buildPoolWhere({ tenantId: actor.tenantId }) });
       } else if (actor.role === 'SALES') {
         const profile = await ensureEmployeeProfile(req.user.id);
         dailyCallTarget = profile.dailyCallTarget;
@@ -1666,12 +1991,12 @@ async function startServer() {
           where: {
             type: { in: ['CALL', 'SEND'] },
             date: { gte: start, lt: end },
-            lead: { agentId: req.user.id },
+              lead: { agentId: req.user.id, tenantId: actor.tenantId },
           },
         });
       } else if (actor.role === 'TEAM_LEAD') {
         const teamMembers = await prisma.user.findMany({
-          where: { role: 'SALES', teamId: actor.teamId || -1 },
+          where: { role: 'SALES', teamId: actor.teamId || -1, tenantId: actor.tenantId },
           select: {
             id: true,
             employeeProfile: { select: { dailyCallTarget: true } },
@@ -1688,7 +2013,7 @@ async function startServer() {
               where: {
                 type: { in: ['CALL', 'SEND'] },
                 date: { gte: start, lt: end },
-                lead: { agentId: { in: salesIds } },
+                lead: { agentId: { in: salesIds }, tenantId: actor.tenantId },
               },
             })
           : 0;
@@ -1698,13 +2023,16 @@ async function startServer() {
             where: {
               type: { in: ['CALL', 'SEND'] },
               date: { gte: start, lt: end },
-              lead: { agentId: { in: salesIds } },
+              lead: { agentId: { in: salesIds }, tenantId: actor.tenantId },
             },
             _count: { _all: true },
           });
           const leadIds = callsByAgent.map((item) => item.leadId);
           const mappedLeads = leadIds.length
-            ? await prisma.lead.findMany({ where: { id: { in: leadIds } }, select: { id: true, agentId: true } })
+            ? await prisma.lead.findMany({
+                where: { id: { in: leadIds }, tenantId: actor.tenantId },
+                select: { id: true, agentId: true },
+              })
             : [];
           const interactionByAgent = mappedLeads.reduce((acc, lead) => {
             const leadMetric = callsByAgent.find((item) => item.leadId === lead.id)?._count?._all || 0;
@@ -1716,7 +2044,7 @@ async function startServer() {
             callsToday: interactionByAgent[member.userId] || 0,
           }));
         }
-        poolCount = await prisma.lead.count({ where: buildPoolWhere({ teamId: actor.teamId }) });
+        poolCount = await prisma.lead.count({ where: buildPoolWhere({ teamId: actor.teamId, tenantId: actor.tenantId }) });
       }
       const safeTotal = safeCount(total);
       const safeAgreed = safeCount(agreed);
@@ -1761,7 +2089,7 @@ async function startServer() {
               membersCount: teamMembersPerformance.length,
             }
           : null,
-        scope: actor.role === 'ADMIN' ? 'GLOBAL' : actor.role === 'TEAM_LEAD' ? 'TEAM' : 'AGENT',
+        scope: actor.role === 'ADMIN' ? 'TENANT' : actor.role === 'TEAM_LEAD' ? 'TEAM' : 'AGENT',
         generatedAt: new Date().toISOString(),
       });
     } catch (error) {
@@ -1791,10 +2119,14 @@ async function startServer() {
       if (!actor) {
         return res.status(401).json({ error: 'Invalid user context' });
       }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
 
       const where = actor.role === 'TEAM_LEAD'
-        ? { teamId: actor.teamId || -1, role: 'SALES' }
-        : {};
+        ? { teamId: actor.teamId || -1, role: 'SALES', tenantId: actor.tenantId }
+        : { tenantId: actor.tenantId };
       const users = await prisma.user.findMany({
         where,
         select: {
@@ -1802,6 +2134,7 @@ async function startServer() {
           name: true,
           email: true,
           role: true,
+          tenantId: true,
           teamId: true,
           team: { select: { id: true, name: true } },
           employeeProfile: true,
@@ -1820,9 +2153,14 @@ async function startServer() {
     if (!actor) {
       return res.status(401).json({ error: 'Invalid user context' });
     }
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) {
+      return res.status(400).json({ error: actorTenantError });
+    }
     const search = normalizeSingleQueryValue(req.query.search);
     const where = {
       role: 'SALES',
+      tenantId: actor.tenantId,
       ...(actor.role === 'TEAM_LEAD' ? { teamId: actor.teamId || -1 } : {}),
       ...(typeof search === 'string' && search.trim()
         ? {
@@ -1864,7 +2202,7 @@ async function startServer() {
             where: {
               type: 'CALL',
               date: { gte: start, lt: end },
-              lead: { agentId: { in: agentIds } },
+              lead: { agentId: { in: agentIds }, tenantId: actor.tenantId },
             },
             select: {
               lead: {
@@ -1905,6 +2243,10 @@ async function startServer() {
     if (!actor) {
       return res.status(401).json({ error: 'Invalid user context' });
     }
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) {
+      return res.status(400).json({ error: actorTenantError });
+    }
 
     const userId = parseInteger(req.params.id);
     if (userId === null || userId < 1) {
@@ -1917,8 +2259,8 @@ async function startServer() {
     }
 
     try {
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
+      const user = await prisma.user.findFirst({
+        where: { id: userId, tenantId: actor.tenantId },
         select: { id: true, role: true, teamId: true },
       });
 
@@ -1951,16 +2293,30 @@ async function startServer() {
   // GET /api/templates
   app.get('/api/templates', authenticateToken, async (req, res) => {
     try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
       await Promise.all(
         DEFAULT_TEMPLATES.map((template) =>
           prisma.messageTemplate.upsert({
-            where: { status: template.status },
+            where: { tenantId_status: { tenantId: actor.tenantId, status: template.status } },
             update: {},
-            create: template,
+            create: {
+              ...template,
+              tenantId: actor.tenantId,
+            },
           }),
         ),
       );
-      const templates = await prisma.messageTemplate.findMany();
+      const templates = await prisma.messageTemplate.findMany({
+        where: { tenantId: actor.tenantId },
+        orderBy: { id: 'asc' },
+      });
       res.json(templates);
     } catch (error) {
       console.error(error);
@@ -1973,14 +2329,140 @@ async function startServer() {
     const { id } = req.params;
     const { content } = req.body;
     try {
-      const template = await prisma.messageTemplate.update({
-        where: { id: parseInt(id) },
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
+      const templateId = parseInteger(id);
+      if (templateId === null || templateId < 1) {
+        return res.status(400).json({ error: 'Invalid template id' });
+      }
+      const template = await prisma.messageTemplate.updateMany({
+        where: { id: templateId, tenantId: actor.tenantId },
         data: { content }
       });
-      res.json(template);
+      if (!template.count) {
+        return res.status(404).json({ error: 'Template not found' });
+      }
+      const updatedTemplate = await prisma.messageTemplate.findFirst({
+        where: { id: templateId, tenantId: actor.tenantId },
+      });
+      res.json(updatedTemplate);
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Failed to update template' });
+    }
+  });
+
+  app.get('/api/assistant/training', authenticateToken, async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
+      const bucket = readAssistantTraining();
+      const key = String(actor.tenantId);
+      const training = bucket[key] || { topic: '', context: '', updatedAt: null };
+      return res.json(training);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to load assistant training' });
+    }
+  });
+
+  app.post('/api/assistant/training', authenticateToken, async (req, res) => {
+    const topic = normalizeNullableString(req.body?.topic, 120) || '';
+    const context = normalizeNullableString(req.body?.context, 2000) || '';
+    if (!topic && !context) {
+      return res.status(400).json({ error: 'Training topic or context is required' });
+    }
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
+      const bucket = readAssistantTraining();
+      const key = String(actor.tenantId);
+      bucket[key] = { topic, context, updatedAt: new Date().toISOString() };
+      writeAssistantTraining(bucket);
+      return res.json(bucket[key]);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to save assistant training' });
+    }
+  });
+
+  app.post('/api/assistant/extract-name', authenticateToken, async (req, res) => {
+    const transcript = normalizeNullableString(req.body?.transcript, 1200);
+    if (!transcript) {
+      return res.status(400).json({ error: 'Transcript is required' });
+    }
+    const extractedName = extractNameFromTranscript(transcript);
+    return res.json({ extractedName });
+  });
+
+  app.post('/api/assistant/generate-script', authenticateToken, async (req, res) => {
+    const leadName = normalizeNullableString(req.body?.leadName, 120) || '';
+    const occupation = normalizeNullableString(req.body?.occupation, 120) || '';
+    const age = normalizeNullableString(req.body?.age, 20) || '';
+    const education = normalizeNullableString(req.body?.education, 120) || '';
+    const goals = normalizeNullableString(req.body?.goals, 280) || '';
+    const notes = normalizeNullableString(req.body?.notes, 1000) || '';
+    const searchWeb = req.body?.searchWeb !== false;
+
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
+
+      const bucket = readAssistantTraining();
+      const savedTraining = bucket[String(actor.tenantId)] || {};
+      const trainingTopic = normalizeNullableString(req.body?.trainingTopic, 120) || savedTraining.topic || '';
+      const trainingContext = normalizeNullableString(req.body?.trainingContext, 2000) || savedTraining.context || '';
+      const followUpQuestions = buildFollowUpQuestions({ occupation, age, education, goals });
+      const queryParts = [trainingTopic, occupation, education, goals].filter(Boolean);
+      const webInsights = searchWeb && queryParts.length
+        ? await fetchWebInsights(queryParts.join(' '))
+        : [];
+      const script = await generateScriptWithModel({
+        leadName,
+        trainingTopic,
+        trainingContext,
+        occupation,
+        age,
+        education,
+        goals,
+        notes,
+        webInsights,
+      });
+
+      return res.json({
+        script,
+        followUpQuestions,
+        webInsights,
+        trainingTopic,
+        trainingContext,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to generate assistant script' });
     }
   });
 
