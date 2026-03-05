@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Database, RefreshCw, Search } from 'lucide-react';
+import { Database, Loader2, RefreshCw, Search, Trash2 } from 'lucide-react';
 import api from '../../services/api';
 
 interface PooledLead {
@@ -22,6 +22,9 @@ export default function PooledNumbers() {
   const [search, setSearch] = useState('');
   const [teamId, setTeamId] = useState<number | ''>('');
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [deleteCount, setDeleteCount] = useState(100);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchTeams = async () => {
     try {
@@ -36,6 +39,7 @@ export default function PooledNumbers() {
   const fetchPooled = async () => {
     setLoading(true);
     setError('');
+    setSuccess('');
     try {
       const response = await api.get('/admin/pooled-numbers', {
         params: {
@@ -66,6 +70,58 @@ export default function PooledNumbers() {
       return acc;
     }, {});
   }, [leads]);
+
+  const deleteAllPooled = async () => {
+    const confirmed = window.confirm('سيتم حذف كل الأرقام المجمعة حسب الفلاتر الحالية. هل أنت متأكد؟');
+    if (!confirmed) return;
+    setDeleting(true);
+    setError('');
+    setSuccess('');
+    try {
+      const response = await api.delete('/admin/pooled-numbers', {
+        data: {
+          mode: 'ALL',
+          ...(teamId ? { teamId } : {}),
+          ...(search.trim() ? { search: search.trim() } : {}),
+        },
+      });
+      setSuccess(response.data?.message || 'تم حذف الأرقام بنجاح');
+      await fetchPooled();
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'تعذر حذف الأرقام');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const deleteLimitedPooled = async () => {
+    if (!Number.isInteger(deleteCount) || deleteCount < 1) {
+      setError('عدد الحذف يجب أن يكون رقمًا صحيحًا أكبر من صفر');
+      return;
+    }
+    const confirmed = window.confirm(`سيتم حذف أول ${deleteCount} رقم من المجمع حسب الفلاتر الحالية. هل تريد المتابعة؟`);
+    if (!confirmed) return;
+    setDeleting(true);
+    setError('');
+    setSuccess('');
+    try {
+      const response = await api.delete('/admin/pooled-numbers', {
+        data: {
+          mode: 'COUNT',
+          count: deleteCount,
+          sort: 'OLDEST',
+          ...(teamId ? { teamId } : {}),
+          ...(search.trim() ? { search: search.trim() } : {}),
+        },
+      });
+      setSuccess(response.data?.message || 'تم حذف جزء من الأرقام بنجاح');
+      await fetchPooled();
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'تعذر حذف الأرقام');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -98,8 +154,28 @@ export default function PooledNumbers() {
           تحديث
         </button>
       </div>
+      <div className="glass-card p-4 flex flex-col md:flex-row gap-3 md:items-center">
+        <div className="flex-1 text-sm text-slate-600">يمكنك حذف كل العملاء المجمعة حسب الفلاتر أو حذف عدد محدد فقط.</div>
+        <input
+          className="input-field md:max-w-40"
+          type="number"
+          min={1}
+          value={deleteCount}
+          onChange={(e) => setDeleteCount(Number(e.target.value) || 0)}
+          placeholder="عدد"
+        />
+        <button className="btn-secondary flex items-center justify-center gap-2" onClick={deleteLimitedPooled} disabled={deleting}>
+          {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+          حذف عدد محدد
+        </button>
+        <button className="px-4 py-2 rounded-xl bg-red-100 text-red-700 font-bold flex items-center justify-center gap-2 disabled:opacity-50" onClick={deleteAllPooled} disabled={deleting}>
+          {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+          حذف كل النتائج
+        </button>
+      </div>
 
       {error && <div className="glass-card p-4 border border-red-200 text-red-700">{error}</div>}
+      {success && <div className="glass-card p-4 border border-emerald-200 text-emerald-700">{success}</div>}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="glass-card p-4">

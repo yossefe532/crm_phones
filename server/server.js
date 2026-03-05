@@ -464,6 +464,36 @@ async function startServer() {
     }
   });
 
+  app.delete('/api/teams/:id', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const teamId = parseInteger(req.params.id);
+    if (teamId === null || teamId < 1) {
+      return res.status(400).json({ error: 'Invalid team id' });
+    }
+
+    try {
+      const team = await prisma.team.findUnique({
+        where: { id: teamId },
+        select: { id: true, name: true },
+      });
+      if (!team) {
+        return res.status(404).json({ error: 'Team not found' });
+      }
+
+      await prisma.$transaction(async (tx) => {
+        await tx.interaction.deleteMany({ where: { lead: { teamId } } });
+        await tx.lead.deleteMany({ where: { teamId } });
+        await tx.employeeProfile.deleteMany({ where: { user: { teamId } } });
+        await tx.user.deleteMany({ where: { teamId } });
+        await tx.team.delete({ where: { id: teamId } });
+      });
+
+      return res.json({ message: 'Team deleted successfully' });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to delete team' });
+    }
+  });
+
   app.get('/api/team-management', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
     const actor = await getCurrentUserScope(req.user.id);
     if (!actor) {
@@ -762,6 +792,7 @@ async function startServer() {
       const isUploadAll = actor.role === 'ADMIN' && uploadScope === 'ALL';
       const requestedTeamId = parseOptionalTeamId(rawTeamId);
       let targetTeamIds = [];
+      let useGlobalPool = false;
 
       if (actor.role === 'TEAM_LEAD') {
         if (!actor.teamId) {
@@ -769,11 +800,7 @@ async function startServer() {
         }
         targetTeamIds = [actor.teamId];
       } else if (isUploadAll) {
-        const allTeams = await prisma.team.findMany({ select: { id: true } });
-        targetTeamIds = allTeams.map((team) => team.id);
-        if (!targetTeamIds.length) {
-          return res.status(400).json({ error: 'No teams available to upload data for all teams' });
-        }
+        useGlobalPool = true;
       } else {
         if (!requestedTeamId) {
           return res.status(400).json({ error: 'teamId is required for team upload' });
@@ -789,7 +816,7 @@ async function startServer() {
       const chunkSize = 50;
       for (let i = 0; i < safeLeads.length; i += chunkSize) {
         const chunk = safeLeads.slice(i, i + chunkSize);
-        await Promise.all(targetTeamIds.map(async (teamId) => {
+        if (useGlobalPool) {
           await Promise.all(chunk.map(async (l) => {
             try {
               await prisma.lead.create({
@@ -800,7 +827,7 @@ async function startServer() {
                   status: POOL_STATUS,
                   source: POOL_SOURCE,
                   agentId: null,
-                  teamId,
+                  teamId: null,
                 },
               });
               count++;
@@ -808,10 +835,31 @@ async function startServer() {
               console.error(`Failed to import lead ${l.phone}:`, e.message);
             }
           }));
-        }));
+        } else {
+          await Promise.all(targetTeamIds.map(async (teamId) => {
+            await Promise.all(chunk.map(async (l) => {
+              try {
+                await prisma.lead.create({
+                  data: {
+                    name: l.name,
+                    phone: l.phone,
+                    gender: l.gender,
+                    status: POOL_STATUS,
+                    source: POOL_SOURCE,
+                    agentId: null,
+                    teamId,
+                  },
+                });
+                count++;
+              } catch (e) {
+                console.error(`Failed to import lead ${l.phone}:`, e.message);
+              }
+            }));
+          }));
+        }
       }
 
-      res.json({ message: `Successfully added ${count} leads to pool`, teamsCount: targetTeamIds.length });
+      res.json({ message: `Successfully added ${count} leads to pool`, teamsCount: useGlobalPool ? 0 : targetTeamIds.length, globalPool: useGlobalPool });
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Failed to upload leads: ' + error.message });
@@ -852,6 +900,59 @@ async function startServer() {
     }
   });
 
+  app.delete('/api/admin/pooled-numbers', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const teamId = parseOptionalTeamId(req.body?.teamId);
+    const search = normalizeNullableString(req.body?.search, 120);
+    const mode = typeof req.body?.mode === 'string' ? req.body.mode.trim().toUpperCase() : 'ALL';
+    const count = parseInteger(req.body?.count);
+    const sort = typeof req.body?.sort === 'string' ? req.body.sort.trim().toUpperCase() : 'OLDEST';
+    const where = buildPoolWhere({
+      ...(teamId ? { teamId } : {}),
+      ...(search
+        ? {
+            OR: [
+              { name: { contains: search } },
+              { phone: { contains: search } },
+            ],
+          }
+        : {}),
+    });
+
+    try {
+      if (mode === 'COUNT') {
+        if (count === null || count < 1) {
+          return res.status(400).json({ error: 'count must be a positive integer' });
+        }
+
+        const candidates = await prisma.lead.findMany({
+          where,
+          select: { id: true },
+          orderBy: { createdAt: sort === 'NEWEST' ? 'desc' : 'asc' },
+          take: count,
+        });
+        const ids = candidates.map((item) => item.id);
+        if (!ids.length) {
+          return res.json({ message: 'No pooled leads matched deletion filters', deleted: 0 });
+        }
+
+        const result = await prisma.$transaction(async (tx) => {
+          await tx.interaction.deleteMany({ where: { leadId: { in: ids } } });
+          return tx.lead.deleteMany({ where: { id: { in: ids } } });
+        });
+        return res.json({ message: `Deleted ${result.count} pooled leads`, deleted: result.count });
+      }
+
+      const result = await prisma.$transaction(async (tx) => {
+        await tx.interaction.deleteMany({ where: { lead: where } });
+        return tx.lead.deleteMany({ where });
+      });
+      return res.json({ message: `Deleted ${result.count} pooled leads`, deleted: result.count });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to delete pooled leads' });
+    }
+  });
+
   // POST /api/leads/claim (Sales - Get a lead from pool)
   app.post('/api/leads/claim', authenticateToken, async (req, res) => {
     if (req.user.role !== 'SALES') {
@@ -871,12 +972,18 @@ async function startServer() {
     try {
       // Guard against race conditions: find candidate then conditionally claim it.
       const maxAttempts = 5;
+      const claimScope = buildPoolWhere({
+        OR: [
+          { teamId: actor.teamId },
+          { teamId: null },
+        ],
+      });
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        const poolCount = await prisma.lead.count({ where: buildPoolWhere({ teamId: actor.teamId }) });
+        const poolCount = await prisma.lead.count({ where: claimScope });
         if (!poolCount) return res.status(404).json({ error: 'No leads available in pool' });
         const randomSkip = Math.floor(Math.random() * poolCount);
         const lead = await prisma.lead.findFirst({
-          where: buildPoolWhere({ teamId: actor.teamId }),
+          where: claimScope,
           orderBy: { id: 'asc' },
           skip: randomSkip,
         });
@@ -884,8 +991,8 @@ async function startServer() {
         if (!lead) return res.status(404).json({ error: 'No leads available in pool' });
 
         const claimed = await prisma.lead.updateMany({
-          where: buildPoolWhere({ id: lead.id, teamId: actor.teamId }),
-          data: { agentId: userId, status: POOL_STATUS }
+          where: buildPoolWhere({ id: lead.id, teamId: lead.teamId ?? null }),
+          data: { agentId: userId, status: POOL_STATUS, teamId: actor.teamId },
         });
 
         if (!claimed.count) {

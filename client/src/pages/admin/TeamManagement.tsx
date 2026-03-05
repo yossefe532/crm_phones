@@ -56,6 +56,7 @@ export default function TeamManagement() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [deletingMemberId, setDeletingMemberId] = useState<number | null>(null);
+  const [deletingTeamId, setDeletingTeamId] = useState<number | null>(null);
   const [roleUpdatingId, setRoleUpdatingId] = useState<number | null>(null);
   const [form, setForm] = useState({
     name: '',
@@ -173,6 +174,22 @@ export default function TeamManagement() {
     }
   };
 
+  const deleteTeam = async (team: TeamBlock) => {
+    const confirmed = window.confirm(`حذف الفريق "${team.name}" سيحذف كل أعضائه وكل عملائه. هل أنت متأكد؟`);
+    if (!confirmed) return;
+    resetAlerts();
+    setDeletingTeamId(team.id);
+    try {
+      await api.delete(`/teams/${team.id}`);
+      setSuccess('تم حذف الفريق بالكامل');
+      await fetchTeams();
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'تعذر حذف الفريق');
+    } finally {
+      setDeletingTeamId(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -246,6 +263,16 @@ export default function TeamManagement() {
               <div className="text-sm text-slate-600">
                 ليدز: {team.stats.totalLeads} • Pool: {team.stats.poolCount} • مكالمات اليوم: {team.stats.callsToday}
               </div>
+              {isAdmin && (
+                <button
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-red-100 text-red-700 text-xs font-bold disabled:opacity-50"
+                  onClick={() => deleteTeam(team)}
+                  disabled={deletingTeamId === team.id}
+                >
+                  {deletingTeamId === team.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                  حذف الفريق بالكامل
+                </button>
+              )}
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-6 gap-3">

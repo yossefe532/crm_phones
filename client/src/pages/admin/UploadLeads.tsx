@@ -124,7 +124,7 @@ export default function UploadLeads() {
     <div className="space-y-6">
       <div>
         <h2 className="text-3xl font-bold text-slate-800 mb-2">رفع داتا أرقام</h2>
-        <p className="text-slate-600">إضافة مجموعة كبيرة من الأرقام إلى مجمع فريق محدد أو لجميع الفرق</p>
+        <p className="text-slate-600">إضافة مجموعة كبيرة من الأرقام إلى مجمع فريق محدد أو إلى مجمع عام غير مخصص</p>
       </div>
 
       <div className="glass-card p-6">
@@ -137,7 +137,7 @@ export default function UploadLeads() {
               onChange={(e) => setUploadScope(e.target.value as 'TEAM' | 'ALL')}
             >
               <option value="TEAM">لفريق واحد</option>
-              <option value="ALL">لجميع الفرق</option>
+              <option value="ALL">للمجمع العام</option>
             </select>
           </div>
         )}
@@ -157,7 +157,7 @@ export default function UploadLeads() {
             ))}
           </select>
           {user?.role === 'ADMIN' && uploadScope === 'ALL' && (
-            <p className="text-xs text-slate-500 mt-2">سيتم إضافة كل رقم إلى مجمع كل فريق.</p>
+            <p className="text-xs text-slate-500 mt-2">سيتم إضافة كل رقم للمجمع العام ويُسحب عشوائيًا عند claim.</p>
           )}
         </div>
 
