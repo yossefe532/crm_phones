@@ -1,4 +1,4 @@
-FROM node:20-alpine AS client-build
+FROM node:20-bullseye-slim AS client-build
 
 WORKDIR /client
 COPY client/package*.json ./
@@ -6,9 +6,10 @@ RUN npm ci
 COPY client/ ./
 RUN npm run build
 
-FROM node:20-alpine
+FROM node:20-bullseye-slim
 
 WORKDIR /app/server
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY server/package*.json ./
 RUN npm ci
 COPY server/ ./
@@ -20,4 +21,4 @@ ENV DATABASE_URL=file:/var/data/dev.db
 
 EXPOSE 10000
 
-CMD ["sh", "-c", "npx prisma db push && node server.js"]
+CMD ["sh", "-c", "npx prisma db push && node prisma/seed.js && node server.js"]

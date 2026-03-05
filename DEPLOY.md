@@ -17,6 +17,16 @@
 
 بعد نجاح النشر افتح رابط Render وسيعمل النظام كامل (واجهة + API).
 
+## نشر سريع على Railway
+1. New Project → Deploy from GitHub Repo.
+2. اختر `yossefe532/crm_phones`.
+3. Variables:
+   - `JWT_SECRET` قيمة عشوائية طويلة
+   - `DATABASE_URL` = `file:/var/data/dev.db`
+4. Volumes:
+   - Mount Path = `/var/data`
+5. Deploy أو Redeploy Latest.
+
 ## 1) تجهيز سيرفر سحابي
 - أنشئ VPS عليه Ubuntu 22.04 أو أحدث.
 - اربط دومينك بعنوان السيرفر (A Record).
