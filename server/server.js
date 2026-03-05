@@ -37,7 +37,7 @@ const allowedOrigins = CORS_ORIGIN.split(',').map((origin) => origin.trim()).fil
 app.use(cors({
   origin: allowedOrigins.length ? allowedOrigins : true,
 }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 console.log('Initializing Prisma Client...');
 const prisma = new PrismaClient({

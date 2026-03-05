@@ -10,6 +10,8 @@ interface TeamOption {
   name: string;
 }
 
+const UPLOAD_CHUNK_SIZE = 500;
+
 export default function UploadLeads() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState('');
@@ -66,12 +68,18 @@ export default function UploadLeads() {
         throw new Error('لا توجد بيانات صالحة للمعالجة');
       }
 
-      const response = await api.post('/leads/bulk', {
-        leads,
-        teamId: isUploadAll ? null : selectedTeamId,
-        uploadScope: isUploadAll ? 'ALL' : 'TEAM',
-      });
-      setSuccess(response.data.message);
+      let totalAdded = 0;
+      for (let i = 0; i < leads.length; i += UPLOAD_CHUNK_SIZE) {
+        const chunk = leads.slice(i, i + UPLOAD_CHUNK_SIZE);
+        const response = await api.post('/leads/bulk', {
+          leads: chunk,
+          teamId: isUploadAll ? null : selectedTeamId,
+          uploadScope: isUploadAll ? 'ALL' : 'TEAM',
+        });
+        const addedInChunk = Number(response.data?.message?.match(/\d+/)?.[0] || 0);
+        totalAdded += addedInChunk;
+      }
+      setSuccess(`تم رفع ${totalAdded} رقم بنجاح`);
       setTextInput('');
     } catch (err: any) {
       setError(err.response?.data?.error || err.message || 'حدث خطأ أثناء رفع البيانات');
