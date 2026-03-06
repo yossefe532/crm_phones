@@ -8,4 +8,4 @@ cmds = ["npm --prefix server ci", "npm --prefix client ci"]
 cmds = ["npm --prefix client run build", "npm --prefix server run prisma:generate", "npm --prefix server run db:migrate:deploy"]
 
 [start]
-cmd = "npm --prefix server run start:prod"
+cmd = "sh -c 'if [ -f server/package.json ]; then npm --prefix server run start:prod; else npm run start:prod; fi'"
