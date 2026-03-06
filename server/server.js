@@ -101,9 +101,12 @@ const normalizeGender = (value) => {
 
 const normalizeEgyptMobile = (value) => {
   if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  return /^01[0125][0-9]{8}$/.test(trimmed) ? trimmed : null;
+  let digits = value.trim().replace(/\D/g, '');
+  if (!digits) return null;
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (/^20[1235][0-9]{9}$/.test(digits)) return `0${digits.slice(2)}`;
+  if (/^01[0125][0-9]{8}$/.test(digits)) return digits;
+  return null;
 };
 
 const normalizeTeamName = (value) => normalizeNullableString(value, 120);
@@ -1021,9 +1024,16 @@ async function startServer() {
     const safeLeads = leads
       .filter((lead) => lead && typeof lead.phone === 'string' && lead.phone.trim())
       .map((lead) => ({
+        normalizedPhone: normalizeEgyptMobile(lead.phone),
         name: typeof lead.name === 'string' && lead.name.trim() ? lead.name.trim() : 'Unknown',
         phone: lead.phone.trim(),
         gender: normalizeGender(lead.gender) || 'UNKNOWN',
+      }))
+      .filter((lead) => lead.normalizedPhone)
+      .map((lead) => ({
+        name: lead.name,
+        phone: lead.normalizedPhone,
+        gender: lead.gender,
       }));
 
     if (!safeLeads.length) {
@@ -1768,6 +1778,10 @@ async function startServer() {
     if (whatsappPhone && !normalizedWhatsappPhone) {
       return res.status(400).json({ error: 'Invalid whatsappPhone value' });
     }
+    const normalizedPhone = normalizeEgyptMobile(phone);
+    if (!normalizedPhone) {
+      return res.status(400).json({ error: 'Invalid phone value' });
+    }
     try {
       const actor = await getCurrentUserScope(req.user.id);
       if (!actor) {
@@ -1800,7 +1814,7 @@ async function startServer() {
         const createdLead = await tx.lead.create({
           data: {
             name,
-            phone,
+            phone: normalizedPhone,
             gender: normalizedGender,
             status: effectiveStatus,
             source: effectiveSource,

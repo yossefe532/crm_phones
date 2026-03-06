@@ -8,6 +8,8 @@ import api from '../services/api';
 import { useAuth } from '../store/useAuth';
 import { AUTO_MESSAGE_STATUSES, buildLeadTemplatePlaceholders, buildTemplateMessage, toWhatsAppNumber } from '../utils/whatsapp';
 
+const EGYPT_MOBILE_REGEX = /^(01[0125][0-9]{8}|20[1235][0-9]{9})$/;
+
 const schema = z.object({
   name: z.string().min(1, 'الاسم مطلوب'),
   status: z.string(),
@@ -15,7 +17,7 @@ const schema = z.object({
   whatsappPhone: z
     .string()
     .optional()
-    .refine((value) => !value || /^01[0125][0-9]{8}$/.test(value), 'رقم الواتساب غير صحيح'),
+    .refine((value) => !value || EGYPT_MOBILE_REGEX.test(value), 'رقم الواتساب غير صحيح'),
   gender: z.enum(['MALE', 'FEMALE', 'UNKNOWN']),
 });
 
@@ -187,7 +189,7 @@ export default function EditLeadModal({ lead, onClose, onUpdate }: Props) {
               <input
                 {...register('whatsappPhone')}
                 className={clsx("input-field", errors.whatsappPhone && "border-red-500")}
-                placeholder="01xxxxxxxxx"
+                placeholder="01xxxxxxxxx أو 20xxxxxxxxxx"
                 dir="ltr"
               />
               {errors.whatsappPhone && <p className="text-xs text-red-500">{errors.whatsappPhone.message}</p>}

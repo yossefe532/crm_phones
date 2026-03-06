@@ -16,13 +16,15 @@ import { useAuth } from '../store/useAuth';
 import { AUTO_MESSAGE_STATUSES, buildLeadTemplatePlaceholders, buildTemplateMessage, toWhatsAppNumber } from '../utils/whatsapp';
 import { assistantService } from '../services/assistant';
 
+const EGYPT_MOBILE_REGEX = /^(01[0125][0-9]{8}|20[1235][0-9]{9})$/;
+
 const leadSchema = z.object({
   name: z.string().min(3, 'الاسم يجب أن يكون 3 أحرف على الأقل'),
-  phone: z.string().regex(/^01[0125][0-9]{8}$/, 'رقم الهاتف غير صحيح (يجب أن يبدأ بـ 01 ويتكون من 11 رقم)'),
+  phone: z.string().regex(EGYPT_MOBILE_REGEX, 'رقم الهاتف غير صحيح (ابدأ بـ 01 أو 20)'),
   whatsappPhone: z
     .string()
     .optional()
-    .refine((value) => !value || /^01[0125][0-9]{8}$/.test(value), 'رقم الواتساب غير صحيح'),
+    .refine((value) => !value || EGYPT_MOBILE_REGEX.test(value), 'رقم الواتساب غير صحيح'),
   notes: z.string().optional(),
   status: z.enum(['NEW', 'AGREED', 'HESITANT', 'REJECTED', 'SPONSOR', 'NO_ANSWER', 'RECONTACT']),
   gender: z.enum(['MALE', 'FEMALE', 'UNKNOWN']),
@@ -399,7 +401,7 @@ export default function AddLead() {
               <input 
                 {...register('phone')}
                 className={clsx("input-field pr-10", errors.phone && "border-red-500 focus:border-red-500")}
-                placeholder="01xxxxxxxxx"
+                placeholder="01xxxxxxxxx أو 20xxxxxxxxxx"
                 dir="ltr"
               />
             </div>
@@ -413,7 +415,7 @@ export default function AddLead() {
               <input
                 {...register('whatsappPhone')}
                 className={clsx("input-field pr-10", errors.whatsappPhone && "border-red-500 focus:border-red-500")}
-                placeholder="01xxxxxxxxx"
+                placeholder="01xxxxxxxxx أو 20xxxxxxxxxx"
                 dir="ltr"
               />
             </div>
