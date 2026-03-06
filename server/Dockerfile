@@ -12,4 +12,4 @@ ENV PORT=5000
 
 EXPOSE 5000
 
-CMD ["sh", "-c", "npx prisma generate && npx prisma migrate deploy && node prisma/seed.js && node server.js"]
+CMD ["node", "scripts/start-prod.mjs"]

@@ -8,4 +8,4 @@ cmds = ["npm ci"]
 cmds = ["npm run prisma:generate", "npm run db:migrate:deploy"]
 
 [start]
-cmd = "npm run start:prod"
+cmd = "node scripts/start-prod.mjs"

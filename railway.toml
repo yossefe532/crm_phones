@@ -3,6 +3,6 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "sh -c 'if [ -f server/package.json ]; then npm --prefix server run start:prod; else npm run start:prod; fi'"
+startCommand = "sh -c 'if [ -f server/scripts/start-prod.mjs ]; then node server/scripts/start-prod.mjs; elif [ -f scripts/start-prod.mjs ]; then node scripts/start-prod.mjs; elif [ -f server/package.json ]; then npm --prefix server run start:prod; else npm run start:prod; fi'"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
