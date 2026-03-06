@@ -4,8 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "prisma generate && prisma migrate deploy && node prisma/seed.js && node server.js",
-    "start:prod": "prisma generate && prisma migrate deploy && node prisma/seed.js && node server.js",
+    "start": "node scripts/start-prod.mjs",
+    "start:prod": "node scripts/start-prod.mjs",
     "postinstall": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate:deploy": "prisma migrate deploy",
