@@ -64,17 +64,24 @@ async function main() {
 
   const cairoLead = users.find((item) => item.email === 'lead.cairo@edicon.com');
   const alexLead = users.find((item) => item.email === 'lead.alex@crm.com');
-  if (cairoLead) {
-    await prisma.team.update({
-      where: { id: cairoTeam.id },
-      data: { leadId: cairoLead.id },
+  const assignTeamLeadSafely = async (teamId, leadId) => {
+    if (!leadId) return;
+    await prisma.$transaction(async (tx) => {
+      await tx.team.updateMany({
+        where: { leadId, id: { not: teamId } },
+        data: { leadId: null },
+      });
+      await tx.team.update({
+        where: { id: teamId },
+        data: { leadId },
+      });
     });
+  };
+  if (cairoLead) {
+    await assignTeamLeadSafely(cairoTeam.id, cairoLead.id);
   }
   if (alexLead) {
-    await prisma.team.update({
-      where: { id: alexTeam.id },
-      data: { leadId: alexLead.id },
-    });
+    await assignTeamLeadSafely(alexTeam.id, alexLead.id);
   }
 
   for (const user of users.filter((item) => item.role === 'SALES')) {
