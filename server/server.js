@@ -7,11 +7,13 @@ import { dirname, join } from 'path';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import { runPrismaBootstrap } from './scripts/prisma-bootstrap.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 dotenv.config({ path: join(__dirname, '.env') });
+runPrismaBootstrap(__dirname);
 
 const app = express();
 const PORT = process.env.PORT || 5000;

@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["nodejs_20"]
+
+[phases.install]
+cmds = ["npm --prefix server ci", "npm --prefix client ci"]
+
+[phases.build]
+cmds = ["npm --prefix client run build", "npm --prefix server run prisma:generate", "npm --prefix server run db:migrate:deploy"]
+
+[start]
+cmd = "npm --prefix server run start:prod"

@@ -1,5 +1,12 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { runPrismaBootstrap } from '../scripts/prisma-bootstrap.mjs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+runPrismaBootstrap(dirname(__dirname));
 
 const prisma = new PrismaClient();
 

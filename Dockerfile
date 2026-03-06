@@ -21,4 +21,4 @@ ENV DATABASE_URL=file:/var/data/dev.db
 
 EXPOSE 10000
 
-CMD ["sh", "-c", "npx prisma db push || echo DB_PUSH_FAILED; node prisma/seed.js || echo SEED_FAILED; node server.js"]
+CMD ["sh", "-c", "npx prisma generate && npx prisma migrate deploy && node prisma/seed.js && node server.js"]

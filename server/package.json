@@ -4,8 +4,12 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "prisma generate && prisma migrate deploy && node prisma/seed.js && node server.js",
+    "start:prod": "prisma generate && prisma migrate deploy && node prisma/seed.js && node server.js",
+    "postinstall": "prisma generate",
     "db:push": "prisma db push",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "prisma:generate": "prisma generate",
     "test": "node tests/team-isolation.verify.mjs",
     "test:tenant": "node tests/tenant-isolation.verify.mjs"
   },
