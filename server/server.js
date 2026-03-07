@@ -1002,6 +1002,110 @@ async function startServer() {
   });
 
   // DELETE /api/users/:id
+  app.put('/api/users/:id', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const userId = parseInteger(req.params.id);
+    if (userId === null || userId < 1) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
+      const target = await prisma.user.findFirst({
+        where: { id: userId, tenantId: actor.tenantId },
+        select: { id: true, role: true, teamId: true, name: true, email: true },
+      });
+      if (!target) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      const hasName = Object.prototype.hasOwnProperty.call(req.body, 'name');
+      const hasEmail = Object.prototype.hasOwnProperty.call(req.body, 'email');
+      const hasRole = Object.prototype.hasOwnProperty.call(req.body, 'role');
+      const hasTeamId = Object.prototype.hasOwnProperty.call(req.body, 'teamId');
+
+      const normalizedName = hasName ? normalizeNullableString(req.body.name, 120) : null;
+      const normalizedEmail = hasEmail && typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : null;
+      const normalizedRole = hasRole && typeof req.body.role === 'string' ? req.body.role.trim().toUpperCase() : null;
+
+      if (hasName && !normalizedName) {
+        return res.status(400).json({ error: 'Name is required' });
+      }
+      if (hasEmail && (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail))) {
+        return res.status(400).json({ error: 'Valid email is required' });
+      }
+      if (hasRole && !USER_ROLES.has(normalizedRole)) {
+        return res.status(400).json({ error: 'Invalid role' });
+      }
+
+      if (actor.role === 'TEAM_LEAD') {
+        if (!actor.teamId) {
+          return res.status(400).json({ error: 'User is not assigned to a team' });
+        }
+        if (target.role !== 'SALES' || target.teamId !== actor.teamId) {
+          return res.status(403).json({ error: 'You can only manage sales members from your team' });
+        }
+        if (hasRole || hasTeamId) {
+          return res.status(403).json({ error: 'Team lead cannot change role or team assignment' });
+        }
+      }
+
+      let nextRole = hasRole ? normalizedRole : target.role;
+      let nextTeamId = hasTeamId ? parseOptionalTeamId(req.body.teamId) : target.teamId;
+      if (actor.role === 'TEAM_LEAD') {
+        nextRole = 'SALES';
+        nextTeamId = actor.teamId;
+      }
+      if (nextRole === 'ADMIN') {
+        nextTeamId = null;
+      } else if (!nextTeamId) {
+        return res.status(400).json({ error: 'Team is required for non-admin users' });
+      }
+      if (nextTeamId) {
+        const team = await prisma.team.findFirst({
+          where: { id: nextTeamId, tenantId: actor.tenantId },
+          select: { id: true },
+        });
+        if (!team) {
+          return res.status(404).json({ error: 'Team not found' });
+        }
+      }
+      if (nextRole === 'TEAM_LEAD') {
+        const leadCapacityError = await assertTeamLeadCapacity(nextTeamId, { excludeUserId: target.id });
+        if (leadCapacityError) {
+          return res.status(409).json({ error: leadCapacityError });
+        }
+      }
+
+      const updated = await prisma.user.update({
+        where: { id: target.id },
+        data: {
+          ...(hasName ? { name: normalizedName } : {}),
+          ...(hasEmail ? { email: normalizedEmail } : {}),
+          ...(actor.role === 'ADMIN' ? { role: nextRole, teamId: nextTeamId } : {}),
+        },
+        include: {
+          team: { select: { id: true, name: true } },
+          employeeProfile: true,
+        },
+      });
+
+      return res.json(updated);
+    } catch (error) {
+      if (error?.code === 'P2002') {
+        return res.status(409).json({ error: 'Email already exists' });
+      }
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to update user' });
+    }
+  });
+
+  // DELETE /api/users/:id
   app.delete('/api/users/:id', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
     const userId = parseInteger(req.params.id);
     if (userId === null || userId < 1) {
@@ -2222,6 +2326,9 @@ async function startServer() {
       return res.status(400).json({ error: actorTenantError });
     }
     const search = normalizeSingleQueryValue(req.query.search);
+    if (actor.role === 'TEAM_LEAD' && !actor.teamId) {
+      return res.status(400).json({ error: 'User is not assigned to a team' });
+    }
     const where = {
       role: 'SALES',
       tenantId: actor.tenantId,

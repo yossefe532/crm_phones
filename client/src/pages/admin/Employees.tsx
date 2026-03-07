@@ -44,6 +44,8 @@ interface CreateAgentForm {
 }
 
 interface EditProfileForm {
+  name: string;
+  email: string;
   dailyCallTarget: number;
   department: string;
   jobTitle: string;
@@ -79,6 +81,8 @@ export default function Employees() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [createForm, setCreateForm] = useState<CreateAgentForm>(defaultCreateForm);
   const [editForm, setEditForm] = useState<EditProfileForm>({
+    name: '',
+    email: '',
     dailyCallTarget: 30,
     department: 'Sales',
     jobTitle: '',
@@ -214,6 +218,8 @@ export default function Employees() {
     resetAlerts();
     setEditingId(employee.id);
     setEditForm({
+      name: employee.name,
+      email: employee.email,
       dailyCallTarget: employee.profile?.dailyCallTarget || 30,
       department: employee.profile?.department || 'Sales',
       jobTitle: employee.profile?.jobTitle || '',
@@ -234,9 +240,21 @@ export default function Employees() {
       setError('القسم مطلوب');
       return;
     }
+    if (editForm.name.trim().length < 2) {
+      setError('اسم الموظف يجب أن يكون حرفين على الأقل');
+      return;
+    }
+    if (!validateEmail(editForm.email)) {
+      setError('يرجى إدخال بريد إلكتروني صحيح');
+      return;
+    }
 
     setSaving(true);
     try {
+      await api.put(`/users/${editingId}`, {
+        name: editForm.name.trim(),
+        email: editForm.email.trim().toLowerCase(),
+      });
       await api.put(`/admin/employees/${editingId}/profile`, {
         dailyCallTarget: editForm.dailyCallTarget,
         department: editForm.department.trim(),
@@ -256,7 +274,6 @@ export default function Employees() {
   };
 
   const deleteEmployee = async (employee: EmployeeRow) => {
-    if (user?.role !== 'ADMIN') return;
     resetAlerts();
     const confirmed = window.confirm(`هل تريد حذف الموظف "${employee.name}"؟`);
     if (!confirmed) return;
@@ -445,16 +462,14 @@ export default function Employees() {
                               <PencilLine size={14} />
                               تعديل
                             </button>
-                            {user?.role === 'ADMIN' && (
-                              <button
-                                className="inline-flex items-center gap-1 text-xs px-3 py-2 rounded-xl bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50"
-                                onClick={() => deleteEmployee(employee)}
-                                disabled={deletingEmployeeId === employee.id}
-                              >
-                                {deletingEmployeeId === employee.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                                حذف
-                              </button>
-                            )}
+                            <button
+                              className="inline-flex items-center gap-1 text-xs px-3 py-2 rounded-xl bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50"
+                              onClick={() => deleteEmployee(employee)}
+                              disabled={deletingEmployeeId === employee.id}
+                            >
+                              {deletingEmployeeId === employee.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                              حذف
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -462,6 +477,8 @@ export default function Employees() {
                         <tr className="border-b border-slate-100">
                           <td colSpan={6} className="pb-4">
                             <div className="p-4 mt-2 rounded-xl border border-slate-200 bg-slate-50 grid md:grid-cols-6 gap-2">
+                              <input className="input-field" value={editForm.name} onChange={(e) => setEditForm((prev) => ({ ...prev, name: e.target.value }))} />
+                              <input className="input-field" value={editForm.email} onChange={(e) => setEditForm((prev) => ({ ...prev, email: e.target.value }))} />
                               <input className="input-field" type="number" min={1} max={500} value={editForm.dailyCallTarget} onChange={(e) => setEditForm((prev) => ({ ...prev, dailyCallTarget: Number(e.target.value) }))} />
                               <input className="input-field" value={editForm.department} onChange={(e) => setEditForm((prev) => ({ ...prev, department: e.target.value }))} />
                               <input className="input-field" value={editForm.jobTitle} onChange={(e) => setEditForm((prev) => ({ ...prev, jobTitle: e.target.value }))} />
