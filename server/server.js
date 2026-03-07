@@ -7,6 +7,7 @@ import { dirname, join } from 'path';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import { randomBytes } from 'crypto';
 import { runPrismaBootstrap } from './scripts/prisma-bootstrap.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -110,6 +111,7 @@ const normalizeEgyptMobile = (value) => {
 };
 
 const normalizeTeamName = (value) => normalizeNullableString(value, 120);
+const generateManagedPassword = () => randomBytes(12).toString('base64').replace(/[^a-zA-Z0-9]/g, '').slice(0, 12);
 
 const assertTeamScopedUser = (user) => {
   if (!user?.teamId) {
@@ -951,6 +953,54 @@ async function startServer() {
     }
   });
 
+  app.put('/api/users/:id/password', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const userId = parseInteger(req.params.id);
+    if (userId === null || userId < 1) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    const providedPassword = typeof req.body?.password === 'string' ? req.body.password.trim() : '';
+    if (providedPassword && providedPassword.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) {
+        return res.status(401).json({ error: 'Invalid user context' });
+      }
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) {
+        return res.status(400).json({ error: actorTenantError });
+      }
+      const target = await prisma.user.findFirst({
+        where: { id: userId, tenantId: actor.tenantId },
+        select: { id: true, role: true, teamId: true },
+      });
+      if (!target) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      if (actor.role === 'TEAM_LEAD') {
+        if (!actor.teamId) {
+          return res.status(400).json({ error: 'User is not assigned to a team' });
+        }
+        if (target.role !== 'SALES' || target.teamId !== actor.teamId) {
+          return res.status(403).json({ error: 'You can only manage sales members in your team' });
+        }
+      }
+
+      const nextPassword = providedPassword || generateManagedPassword();
+      const hashedPassword = await bcrypt.hash(nextPassword, 10);
+      await prisma.user.update({
+        where: { id: target.id },
+        data: { password: hashedPassword },
+      });
+
+      return res.json({ message: 'Password updated successfully', password: nextPassword });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to update password' });
+    }
+  });
+
   // DELETE /api/users/:id
   app.delete('/api/users/:id', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
     const userId = parseInteger(req.params.id);
@@ -984,8 +1034,6 @@ async function startServer() {
         if (user.role !== 'SALES' || user.teamId !== actor.teamId) {
           return res.status(403).json({ error: 'You can only remove sales members from your team' });
         }
-      } else if (user.role === 'ADMIN') {
-        return res.status(403).json({ error: 'Admin accounts cannot be removed' });
       }
 
       await prisma.$transaction(async (tx) => {

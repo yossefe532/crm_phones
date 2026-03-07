@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, Crown, Loader2, Trash2, UserPlus } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Crown, KeyRound, Loader2, Trash2, UserPlus } from 'lucide-react';
 import api from '../../services/api';
 import { useAuth } from '../../store/useAuth';
 
@@ -56,6 +56,7 @@ export default function TeamManagement() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [deletingMemberId, setDeletingMemberId] = useState<number | null>(null);
+  const [resettingMemberId, setResettingMemberId] = useState<number | null>(null);
   const [deletingTeamId, setDeletingTeamId] = useState<number | null>(null);
   const [roleUpdatingId, setRoleUpdatingId] = useState<number | null>(null);
   const [form, setForm] = useState({
@@ -157,6 +158,26 @@ export default function TeamManagement() {
       setError(err.response?.data?.error || 'تعذر إزالة العضو');
     } finally {
       setDeletingMemberId(null);
+    }
+  };
+
+  const resetMemberPassword = async (member: TeamMember) => {
+    const customPassword = window.prompt('اكتب كلمة مرور جديدة (أو اتركها فارغة لتوليد كلمة مرور تلقائيًا)');
+    if (customPassword === null) return;
+    resetAlerts();
+    setResettingMemberId(member.id);
+    try {
+      const payload = customPassword.trim() ? { password: customPassword.trim() } : {};
+      const response = await api.put(`/users/${member.id}/password`, payload);
+      const newPassword = response.data?.password || customPassword.trim();
+      setSuccess(`تم تحديث كلمة مرور ${member.name}`);
+      if (newPassword) {
+        window.alert(`كلمة المرور الجديدة لـ ${member.name}: ${newPassword}`);
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'تعذر تحديث كلمة المرور');
+    } finally {
+      setResettingMemberId(null);
     }
   };
 
@@ -315,6 +336,16 @@ export default function TeamManagement() {
                       </td>
                       <td className="py-3">
                         <div className="flex items-center gap-2">
+                          {(isAdmin || member.role === 'SALES') && (
+                            <button
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-sky-100 text-sky-700 text-xs disabled:opacity-50"
+                              onClick={() => resetMemberPassword(member)}
+                              disabled={resettingMemberId === member.id}
+                            >
+                              {resettingMemberId === member.id ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
+                              كلمة السر
+                            </button>
+                          )}
                           {isAdmin && member.role === 'SALES' && (
                             <button
                               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-100 text-indigo-700 text-xs disabled:opacity-50"
@@ -339,7 +370,7 @@ export default function TeamManagement() {
                           <button
                             className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-100 text-red-700 text-xs disabled:opacity-50"
                             onClick={() => removeMember(member)}
-                            disabled={deletingMemberId === member.id}
+                            disabled={deletingMemberId === member.id || (!isAdmin && member.role !== 'SALES')}
                           >
                             {deletingMemberId === member.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                             إزالة
