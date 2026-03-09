@@ -21,6 +21,8 @@ export default function UploadLeads() {
   const [teams, setTeams] = useState<TeamOption[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<number | ''>('');
   const [uploadScope, setUploadScope] = useState<'TEAM' | 'ALL'>('TEAM');
+  const [batchName, setBatchName] = useState('');
+  const [batchLocation, setBatchLocation] = useState('');
   const { user } = useAuth();
 
   useEffect(() => {
@@ -50,37 +52,50 @@ export default function UploadLeads() {
     setSuccess('');
     
     try {
-      // Validate and format data
-      const leads = data.map((row: any) => {
-        // Handle different column names if necessary, or assume direct mapping
-        // If row is string (from text input), treat as phone
-        if (typeof row === 'string') {
-          return { phone: row.trim(), source: 'POOL' };
-        }
-        return {
-          name: row.name || row['الاسم'] || 'Unknown',
-          phone: String(row.phone || row['رقم الهاتف'] || row['موبايل'] || '').trim(),
-          source: 'POOL'
-        };
-      }).filter(l => l.phone.length >= 10); // Basic validation
+      const rows = data
+        .map((row: any) => {
+          if (typeof row === 'string') return row.trim();
+          return {
+            name: row.name || row['الاسم'] || row['Name'] || '',
+            phone: String(row.phone || row['رقم الهاتف'] || row['موبايل'] || row['Phone'] || '').trim(),
+            gender: row.gender || row['النوع'] || 'UNKNOWN',
+          };
+        })
+        .filter((row) => (typeof row === 'string' ? row.trim().length > 0 : row.phone.length > 0));
 
-      if (leads.length === 0) {
+      if (rows.length === 0) {
         throw new Error('لا توجد بيانات صالحة للمعالجة');
       }
 
-      let totalAdded = 0;
-      for (let i = 0; i < leads.length; i += UPLOAD_CHUNK_SIZE) {
-        const chunk = leads.slice(i, i + UPLOAD_CHUNK_SIZE);
-        const response = await api.post('/leads/bulk', {
+      let totalInserted = 0;
+      let totalSkippedExisting = 0;
+      let totalDuplicatesInPayload = 0;
+      let validRows = 0;
+      let resolvedBatchId: number | null = null;
+      let resolvedBatchName = '';
+      for (let i = 0; i < rows.length; i += UPLOAD_CHUNK_SIZE) {
+        const chunk = rows.slice(i, i + UPLOAD_CHUNK_SIZE);
+        const uploadResponse: any = await api.post('/leads/bulk', {
           leads: chunk,
           teamId: isUploadAll ? null : selectedTeamId,
           uploadScope: isUploadAll ? 'ALL' : 'TEAM',
+          batchId: resolvedBatchId,
+          batchName,
+          batchLocation,
         });
-        const addedInChunk = Number(response.data?.message?.match(/\d+/)?.[0] || 0);
-        totalAdded += addedInChunk;
+        totalInserted += Number(uploadResponse.data?.inserted || 0);
+        totalSkippedExisting += Number(uploadResponse.data?.skippedExisting || 0);
+        totalDuplicatesInPayload += Number(uploadResponse.data?.duplicatesInPayload || 0);
+        validRows += Number(uploadResponse.data?.validRows || 0);
+        if (!resolvedBatchId && uploadResponse.data?.batch?.id) {
+          resolvedBatchId = Number(uploadResponse.data.batch.id);
+          resolvedBatchName = uploadResponse.data?.batch?.name || '';
+        }
       }
-      setSuccess(`تم رفع ${totalAdded} رقم بنجاح`);
+      setSuccess(`تمت المعالجة بنجاح • أضيف: ${totalInserted} • موجود مسبقاً: ${totalSkippedExisting} • مكرر داخل الملف: ${totalDuplicatesInPayload} • صالح: ${validRows}${resolvedBatchName ? ` • الحزمة: ${resolvedBatchName}` : ''}`);
       setTextInput('');
+      setBatchName('');
+      setBatchLocation('');
     } catch (err: any) {
       setError(err.response?.data?.error || err.message || 'حدث خطأ أثناء رفع البيانات');
     } finally {
@@ -160,6 +175,26 @@ export default function UploadLeads() {
             <p className="text-xs text-slate-500 mt-2">سيتم إضافة كل رقم للمجمع العام ويُسحب عشوائيًا عند claim.</p>
           )}
         </div>
+        <div className="grid md:grid-cols-2 gap-3 mb-4">
+          <div>
+            <label className="block text-sm font-bold text-slate-700 mb-2">اسم الحزمة</label>
+            <input
+              className="input-field"
+              value={batchName}
+              onChange={(e) => setBatchName(e.target.value)}
+              placeholder="مثال: حملة مارس القاهرة"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-bold text-slate-700 mb-2">المكان/المصدر</label>
+            <input
+              className="input-field"
+              value={batchLocation}
+              onChange={(e) => setBatchLocation(e.target.value)}
+              placeholder="مثال: مدينة نصر أو إعلانات فيسبوك"
+            />
+          </div>
+        </div>
 
         <div className="flex gap-4 mb-6">
           <button
@@ -198,7 +233,7 @@ export default function UploadLeads() {
 
         {mode === 'TEXT' ? (
           <div className="space-y-4">
-            <label className="block text-sm font-bold text-slate-700">أدخل الأرقام (كل رقم في سطر منفصل)</label>
+            <label className="block text-sm font-bold text-slate-700">أدخل الأرقام (مثال: 201062008041,مصطفي, أو رقم فقط)</label>
             <textarea
               className="input-field min-h-[200px] font-mono"
               placeholder="010xxxxxxx&#10;011xxxxxxx&#10;..."

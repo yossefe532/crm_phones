@@ -26,6 +26,7 @@ const leadSchema = z.object({
     .optional()
     .refine((value) => !value || EGYPT_MOBILE_REGEX.test(value), 'رقم الواتساب غير صحيح'),
   notes: z.string().optional(),
+  profileDetails: z.string().optional(),
   status: z.enum(['NEW', 'AGREED', 'HESITANT', 'REJECTED', 'SPONSOR', 'NO_ANSWER', 'RECONTACT']),
   gender: z.enum(['MALE', 'FEMALE', 'UNKNOWN']),
 });
@@ -41,6 +42,7 @@ interface ClaimedLeadPayload {
   name: string;
   phone: string;
   whatsappPhone?: string;
+  profileDetails?: string;
   gender?: 'MALE' | 'FEMALE' | 'UNKNOWN';
 }
 
@@ -50,6 +52,7 @@ interface RecontactLeadPayload {
   phone: string;
   whatsappPhone?: string;
   notes?: string;
+  profileDetails?: string;
   status?: 'NO_ANSWER' | 'RECONTACT' | 'NEW' | 'AGREED' | 'HESITANT' | 'REJECTED' | 'SPONSOR';
   source?: 'CALL' | 'SEND';
   gender?: 'MALE' | 'FEMALE' | 'UNKNOWN';
@@ -122,6 +125,7 @@ export default function AddLead() {
         setValue('phone', lead.phone || '');
         setValue('whatsappPhone', lead.whatsappPhone || '');
         setValue('gender', lead.gender || 'UNKNOWN');
+        setValue('profileDetails', lead.profileDetails || '');
       };
       const applyRecontactLead = (lead: RecontactLeadPayload) => {
         if (!lead?.id) return;
@@ -132,6 +136,7 @@ export default function AddLead() {
         setValue('whatsappPhone', lead.whatsappPhone || '');
         setValue('gender', lead.gender || 'UNKNOWN');
         setValue('notes', lead.notes || '');
+        setValue('profileDetails', lead.profileDetails || '');
         setValue('status', lead.status === 'RECONTACT' ? 'NO_ANSWER' : ((lead.status as LeadForm['status']) || 'NO_ANSWER'));
       };
 
@@ -524,6 +529,15 @@ export default function AddLead() {
           {nameDetectedHint && (
             <p className="text-xs text-indigo-600">{nameDetectedHint}</p>
           )}
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-bold text-slate-700">تفاصيل العميل (تتحفظ مع الرقم)</label>
+          <textarea
+            {...register('profileDetails')}
+            className="input-field min-h-[120px]"
+            placeholder="مثال: شغال ايه، سنه كام، بيدرس ايه، مستوى الدخل، أي تفاصيل مهمة للمستقبل..."
+          />
         </div>
 
         <div className="p-5 rounded-2xl border border-indigo-100 bg-indigo-50/50 space-y-4">

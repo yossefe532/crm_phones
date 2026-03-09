@@ -413,7 +413,7 @@ export default function Employees() {
             <Loader2 className="animate-spin" />
           </div>
         ) : employees.length === 0 ? (
-          <div className="py-8 text-center text-slate-500">لا يوجد وكلاء مطابقين لنتيجة البحث</div>
+          <div className="py-8 text-center text-slate-500">لا يوجد موظفين مطابقين لنتيجة البحث</div>
         ) : (
           <div className="overflow-auto">
             <table className="w-full text-sm">
@@ -439,6 +439,9 @@ export default function Employees() {
                         <td className="py-4">
                           <p className="font-bold text-slate-800">{employee.name}</p>
                           <p className="text-xs text-slate-500">{employee.email}</p>
+                          <p className={`text-xs mt-1 inline-flex px-2 py-1 rounded-full ${employee.role === 'TEAM_LEAD' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-700'}`}>
+                            {employee.role === 'TEAM_LEAD' ? 'Team Lead' : 'Sales'}
+                          </p>
                           <p className="text-xs text-slate-500 mt-1">
                             {employee.profile?.department} {employee.profile?.jobTitle ? `- ${employee.profile.jobTitle}` : ''}
                           </p>

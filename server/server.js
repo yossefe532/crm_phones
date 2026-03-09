@@ -26,6 +26,7 @@ const USER_ROLES = new Set(['ADMIN', 'TEAM_LEAD', 'SALES']);
 const MANAGEABLE_ROLES = new Set(['TEAM_LEAD', 'SALES']);
 const POOL_SOURCE = 'POOL';
 const POOL_STATUS = 'NEW';
+const UNKNOWN_LEAD_NAME = 'Unknown';
 const MAX_TEAM_LEADS_PER_TEAM = 2;
 const DEFAULT_TEMPLATES = [
   { status: 'AGREED', content: 'السلام عليكم {customer_title} {customer_name}، مع حضرتك {user_name} من إيديكون. تم تأكيد موافقتك، وبرجاء إرسال التفاصيل النهائية.' },
@@ -80,6 +81,7 @@ const buildPoolWhere = (extra = {}) => ({
   agentId: null,
   source: POOL_SOURCE,
   status: POOL_STATUS,
+  isHiddenFromSales: false,
   ...extra,
 });
 
@@ -150,6 +152,50 @@ const normalizeNullableString = (value, maxLength = 120) => {
   const trimmed = value.trim();
   if (!trimmed) return null;
   return trimmed.slice(0, maxLength);
+};
+
+const normalizeLeadName = (value) => normalizeNullableString(value, 120) || UNKNOWN_LEAD_NAME;
+
+const hasValidProvidedName = (value) => {
+  const normalized = normalizeNullableString(value, 120);
+  if (!normalized) return false;
+  return normalized.toLowerCase() !== UNKNOWN_LEAD_NAME.toLowerCase();
+};
+
+const parseBulkLine = (line) => {
+  if (typeof line !== 'string') return null;
+  const raw = line.trim();
+  if (!raw) return null;
+  const parts = raw.split(',').map((part) => part.trim());
+  const first = parts[0] || '';
+  const second = parts[1] || '';
+  const normalizedPhone = normalizeEgyptMobile(first);
+  if (!normalizedPhone) return null;
+  const providedName = normalizeNullableString(second, 120);
+  return {
+    phone: normalizedPhone,
+    name: providedName || UNKNOWN_LEAD_NAME,
+    hasProvidedName: !!providedName,
+  };
+};
+
+const normalizeBulkLeadInput = (lead) => {
+  if (!lead) return null;
+  if (typeof lead === 'string') {
+    return parseBulkLine(lead);
+  }
+  const normalizedPhone = normalizeEgyptMobile(typeof lead.phone === 'string' ? lead.phone : '');
+  if (!normalizedPhone) return null;
+  const rawName = typeof lead.name === 'string'
+    ? lead.name
+    : (typeof lead['الاسم'] === 'string' ? lead['الاسم'] : '');
+  const normalizedName = normalizeLeadName(rawName);
+  return {
+    phone: normalizedPhone,
+    name: normalizedName,
+    hasProvidedName: hasValidProvidedName(rawName),
+    gender: normalizeGender(lead.gender) || 'UNKNOWN',
+  };
 };
 
 const readAssistantTraining = () => {
@@ -748,17 +794,17 @@ async function startServer() {
       const { start, end } = buildDayRange();
       const result = await Promise.all(teams.map(async (team) => {
         const [agreed, hesitant, rejected, noAnswer, recontact, poolCount, callsToday] = await Promise.all([
-          prisma.lead.count({ where: { teamId: team.id, source: { not: POOL_SOURCE }, status: 'AGREED' } }),
-          prisma.lead.count({ where: { teamId: team.id, source: { not: POOL_SOURCE }, status: 'HESITANT' } }),
-          prisma.lead.count({ where: { teamId: team.id, source: { not: POOL_SOURCE }, status: 'REJECTED' } }),
-          prisma.lead.count({ where: { teamId: team.id, source: { not: POOL_SOURCE }, status: 'NO_ANSWER' } }),
-          prisma.lead.count({ where: { teamId: team.id, source: { not: POOL_SOURCE }, status: 'RECONTACT' } }),
-          prisma.lead.count({ where: buildPoolWhere({ teamId: team.id }) }),
+          prisma.lead.count({ where: { tenantId: actor.tenantId, teamId: team.id, source: { not: POOL_SOURCE }, status: 'AGREED' } }),
+          prisma.lead.count({ where: { tenantId: actor.tenantId, teamId: team.id, source: { not: POOL_SOURCE }, status: 'HESITANT' } }),
+          prisma.lead.count({ where: { tenantId: actor.tenantId, teamId: team.id, source: { not: POOL_SOURCE }, status: 'REJECTED' } }),
+          prisma.lead.count({ where: { tenantId: actor.tenantId, teamId: team.id, source: { not: POOL_SOURCE }, status: 'NO_ANSWER' } }),
+          prisma.lead.count({ where: { tenantId: actor.tenantId, teamId: team.id, source: { not: POOL_SOURCE }, status: 'RECONTACT' } }),
+          prisma.lead.count({ where: buildPoolWhere({ tenantId: actor.tenantId, teamId: team.id }) }),
           prisma.interaction.count({
             where: {
               type: { in: ['CALL', 'SEND'] },
               date: { gte: start, lt: end },
-              lead: { teamId: team.id },
+              lead: { tenantId: actor.tenantId, teamId: team.id },
             },
           }),
         ]);
@@ -1168,33 +1214,36 @@ async function startServer() {
       return res.status(400).json({ error: actorTenantError });
     }
 
-    const { leads, teamId: rawTeamId, uploadScope } = req.body;
+    const { leads, teamId: rawTeamId, uploadScope, batchId: rawBatchId, batchName: rawBatchName, batchLocation: rawBatchLocation } = req.body;
     if (!Array.isArray(leads) || leads.length === 0) {
       return res.status(400).json({ error: 'Leads array is required' });
     }
 
-    const safeLeads = leads
-      .filter((lead) => lead && typeof lead.phone === 'string' && lead.phone.trim())
-      .map((lead) => ({
-        normalizedPhone: normalizeEgyptMobile(lead.phone),
-        name: typeof lead.name === 'string' && lead.name.trim() ? lead.name.trim() : 'Unknown',
-        phone: lead.phone.trim(),
-        gender: normalizeGender(lead.gender) || 'UNKNOWN',
-      }))
-      .filter((lead) => lead.normalizedPhone)
-      .map((lead) => ({
-        name: lead.name,
-        phone: lead.normalizedPhone,
-        gender: lead.gender,
-      }));
-
-    if (!safeLeads.length) {
+    const normalizedRows = leads.map((lead) => normalizeBulkLeadInput(lead)).filter(Boolean);
+    if (!normalizedRows.length) {
       return res.status(400).json({ error: 'No valid leads to import' });
     }
+    const deduplicatedMap = new Map();
+    let duplicatesInPayload = 0;
+    for (const row of normalizedRows) {
+      const existing = deduplicatedMap.get(row.phone);
+      if (!existing) {
+        deduplicatedMap.set(row.phone, row);
+        continue;
+      }
+      duplicatesInPayload += 1;
+      if (!existing.hasProvidedName && row.hasProvidedName) {
+        deduplicatedMap.set(row.phone, row);
+      }
+    }
+    const safeLeads = [...deduplicatedMap.values()];
 
     try {
       const isUploadAll = actor.role === 'ADMIN' && uploadScope === 'ALL';
       const requestedTeamId = parseOptionalTeamId(rawTeamId);
+      const requestedBatchId = parseOptionalTeamId(rawBatchId);
+      const batchName = normalizeNullableString(rawBatchName, 120);
+      const batchLocation = normalizeNullableString(rawBatchLocation, 120);
       let targetTeamIds = [];
       let useGlobalPool = false;
 
@@ -1218,57 +1267,86 @@ async function startServer() {
         }
         targetTeamIds = [requestedTeamId];
       }
-      let count = 0;
-      
-      const chunkSize = 50;
-      for (let i = 0; i < safeLeads.length; i += chunkSize) {
-        const chunk = safeLeads.slice(i, i + chunkSize);
-        if (useGlobalPool) {
-          await Promise.all(chunk.map(async (l) => {
-            try {
-              await prisma.lead.create({
-                data: {
-                  name: l.name,
-                  phone: l.phone,
-                  gender: l.gender,
-                  status: POOL_STATUS,
-                  source: POOL_SOURCE,
-                  agentId: null,
-                  teamId: null,
-                  tenantId: actor.tenantId,
-                },
-              });
-              count++;
-            } catch (e) {
-              console.error(`Failed to import lead ${l.phone}:`, e.message);
-            }
-          }));
-        } else {
-          await Promise.all(targetTeamIds.map(async (teamId) => {
-            await Promise.all(chunk.map(async (l) => {
-              try {
-                await prisma.lead.create({
-                  data: {
-                    name: l.name,
-                    phone: l.phone,
-                    gender: l.gender,
-                    status: POOL_STATUS,
-                    source: POOL_SOURCE,
-                    agentId: null,
-                    teamId,
-                    tenantId: actor.tenantId,
-                  },
-                });
-                count++;
-              } catch (e) {
-                console.error(`Failed to import lead ${l.phone}:`, e.message);
-              }
-            }));
-          }));
+
+      let resolvedBatchId = null;
+      if (requestedBatchId) {
+        const existingBatch = await prisma.leadBatch.findFirst({
+          where: { id: requestedBatchId, tenantId: actor.tenantId },
+          select: { id: true },
+        });
+        if (!existingBatch) {
+          return res.status(404).json({ error: 'Batch not found' });
         }
+        resolvedBatchId = existingBatch.id;
+      } else {
+        const fallbackName = batchName || `رفع ${new Date().toLocaleDateString('en-CA')}`;
+        const createdBatch = await prisma.leadBatch.create({
+          data: {
+            name: fallbackName,
+            location: batchLocation,
+            tenantId: actor.tenantId,
+          },
+          select: { id: true, name: true, location: true },
+        });
+        resolvedBatchId = createdBatch.id;
       }
 
-      res.json({ message: `Successfully added ${count} leads to pool`, teamsCount: useGlobalPool ? 0 : targetTeamIds.length, globalPool: useGlobalPool });
+      const existingPhones = new Set(
+        (await prisma.lead.findMany({
+          where: {
+            tenantId: actor.tenantId,
+            phone: { in: safeLeads.map((lead) => lead.phone) },
+          },
+          select: { phone: true },
+        })).map((lead) => lead.phone),
+      );
+      const freshLeads = safeLeads.filter((lead) => !existingPhones.has(lead.phone));
+      const skippedExisting = safeLeads.length - freshLeads.length;
+      let inserted = 0;
+      if (freshLeads.length) {
+        const createRows = async (teamId) => {
+          await Promise.all(freshLeads.map(async (lead) => {
+            await prisma.lead.create({
+              data: {
+                name: lead.name,
+                phone: lead.phone,
+                gender: lead.gender || 'UNKNOWN',
+                hasProvidedName: !!lead.hasProvidedName,
+                status: POOL_STATUS,
+                source: POOL_SOURCE,
+                agentId: null,
+                teamId,
+                tenantId: actor.tenantId,
+                batchId: resolvedBatchId,
+                isHiddenFromSales: false,
+              },
+            });
+            inserted += 1;
+          }));
+        };
+        if (useGlobalPool) {
+          await createRows(null);
+        } else {
+          for (const teamId of targetTeamIds) {
+            await createRows(teamId);
+          }
+        }
+      }
+      const batch = await prisma.leadBatch.findUnique({
+        where: { id: resolvedBatchId },
+        select: { id: true, name: true, location: true },
+      });
+      res.json({
+        message: `Successfully added ${inserted} leads to pool`,
+        teamsCount: useGlobalPool ? 0 : targetTeamIds.length,
+        globalPool: useGlobalPool,
+        inserted,
+        skippedExisting,
+        duplicatesInPayload,
+        totalReceived: leads.length,
+        validRows: safeLeads.length,
+        batch,
+      });
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Failed to upload leads: ' + error.message });
@@ -1286,19 +1364,37 @@ async function startServer() {
       return res.status(400).json({ error: actorTenantError });
     }
     const teamId = parseOptionalTeamId(normalizeSingleQueryValue(req.query.teamId));
+    const batchId = parseOptionalTeamId(normalizeSingleQueryValue(req.query.batchId));
     const search = normalizeSingleQueryValue(req.query.search);
-    const where = buildPoolWhere({
+    const location = normalizeNullableString(normalizeSingleQueryValue(req.query.location), 120);
+    const nameMode = typeof normalizeSingleQueryValue(req.query.nameMode) === 'string'
+      ? String(normalizeSingleQueryValue(req.query.nameMode)).trim().toUpperCase()
+      : 'ALL';
+    const includeHidden = String(normalizeSingleQueryValue(req.query.includeHidden) || '0') === '1';
+    const baseWhere = includeHidden
+      ? { agentId: null, source: POOL_SOURCE, status: POOL_STATUS }
+      : buildPoolWhere();
+    const where = {
+      ...baseWhere,
       tenantId: actor.tenantId,
       ...(teamId ? { teamId } : {}),
+      ...(batchId ? { batchId } : {}),
+      ...(nameMode === 'NAMED'
+        ? { hasProvidedName: true }
+        : nameMode === 'UNNAMED'
+          ? { hasProvidedName: false }
+          : {}),
+      ...(location ? { batch: { location: { contains: location } } } : {}),
       ...(typeof search === 'string' && search.trim()
         ? {
             OR: [
               { name: { contains: search.trim() } },
               { phone: { contains: search.trim() } },
+              { batch: { name: { contains: search.trim() } } },
             ],
           }
         : {}),
-    });
+    };
 
     try {
       const [leads, total] = await Promise.all([
@@ -1306,6 +1402,7 @@ async function startServer() {
           where,
           include: {
             team: { select: { id: true, name: true } },
+            batch: { select: { id: true, name: true, location: true } },
           },
           orderBy: { createdAt: 'desc' },
         }),
@@ -1328,22 +1425,38 @@ async function startServer() {
       return res.status(400).json({ error: actorTenantError });
     }
     const teamId = parseOptionalTeamId(req.body?.teamId);
+    const batchId = parseOptionalTeamId(req.body?.batchId);
     const search = normalizeNullableString(req.body?.search, 120);
+    const location = normalizeNullableString(req.body?.location, 120);
+    const nameMode = typeof req.body?.nameMode === 'string' ? req.body.nameMode.trim().toUpperCase() : 'ALL';
+    const includeHidden = req.body?.includeHidden === true;
     const mode = typeof req.body?.mode === 'string' ? req.body.mode.trim().toUpperCase() : 'ALL';
     const count = parseInteger(req.body?.count);
     const sort = typeof req.body?.sort === 'string' ? req.body.sort.trim().toUpperCase() : 'OLDEST';
-    const where = buildPoolWhere({
+    const baseWhere = includeHidden
+      ? { agentId: null, source: POOL_SOURCE, status: POOL_STATUS }
+      : buildPoolWhere();
+    const where = {
+      ...baseWhere,
       tenantId: actor.tenantId,
       ...(teamId ? { teamId } : {}),
+      ...(batchId ? { batchId } : {}),
+      ...(nameMode === 'NAMED'
+        ? { hasProvidedName: true }
+        : nameMode === 'UNNAMED'
+          ? { hasProvidedName: false }
+          : {}),
+      ...(location ? { batch: { location: { contains: location } } } : {}),
       ...(search
         ? {
             OR: [
               { name: { contains: search } },
               { phone: { contains: search } },
+              { batch: { name: { contains: search } } },
             ],
           }
         : {}),
-    });
+    };
 
     try {
       if (mode === 'COUNT') {
@@ -1377,6 +1490,176 @@ async function startServer() {
     } catch (error) {
       console.error(error);
       return res.status(500).json({ error: 'Failed to delete pooled leads' });
+    }
+  });
+
+  app.get('/api/admin/pool-batches', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) {
+      return res.status(401).json({ error: 'Invalid user context' });
+    }
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) {
+      return res.status(400).json({ error: actorTenantError });
+    }
+    const location = normalizeNullableString(normalizeSingleQueryValue(req.query.location), 120);
+    const search = normalizeNullableString(normalizeSingleQueryValue(req.query.search), 120);
+    try {
+      const batches = await prisma.leadBatch.findMany({
+        where: {
+          tenantId: actor.tenantId,
+          ...(location ? { location: { contains: location } } : {}),
+          ...(search ? { name: { contains: search } } : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      const batchStats = await Promise.all(
+        batches.map(async (batch) => {
+          const [totalNumbers, namedCount, unnamedCount, inPoolVisible, hiddenUnclaimed, pulledCount, contactedCount, byUser] = await Promise.all([
+            prisma.lead.count({ where: { tenantId: actor.tenantId, batchId: batch.id } }),
+            prisma.lead.count({ where: { tenantId: actor.tenantId, batchId: batch.id, hasProvidedName: true } }),
+            prisma.lead.count({ where: { tenantId: actor.tenantId, batchId: batch.id, hasProvidedName: false } }),
+            prisma.lead.count({ where: buildPoolWhere({ tenantId: actor.tenantId, batchId: batch.id }) }),
+            prisma.lead.count({ where: buildPoolWhere({ tenantId: actor.tenantId, batchId: batch.id, isHiddenFromSales: true }) }),
+            prisma.lead.count({ where: { tenantId: actor.tenantId, batchId: batch.id, claimedAt: { not: null } } }),
+            prisma.interaction.groupBy({
+              by: ['leadId'],
+              where: {
+                lead: { tenantId: actor.tenantId, batchId: batch.id },
+                type: { in: ['CALL', 'SEND'] },
+              },
+            }).then((rows) => rows.length),
+            prisma.interaction.groupBy({
+              by: ['userId'],
+              where: {
+                userId: { not: null },
+                lead: { tenantId: actor.tenantId, batchId: batch.id },
+                type: { in: ['CALL', 'SEND'] },
+              },
+              _count: { _all: true },
+            }),
+          ]);
+          const userIds = byUser.map((row) => row.userId).filter((id) => Number.isInteger(id));
+          const users = userIds.length
+            ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } })
+            : [];
+          const userMap = new Map(users.map((user) => [user.id, user.name]));
+          const contactedBy = byUser
+            .map((row) => ({
+              userId: row.userId,
+              name: userMap.get(row.userId) || 'غير معروف',
+              interactions: row._count?._all || 0,
+            }))
+            .sort((a, b) => b.interactions - a.interactions)
+            .slice(0, 8);
+          return {
+            id: batch.id,
+            name: batch.name,
+            location: batch.location,
+            createdAt: batch.createdAt,
+            stats: {
+              totalNumbers,
+              namedCount,
+              unnamedCount,
+              inPoolVisible,
+              hiddenUnclaimed,
+              pulledCount,
+              contactedCount,
+              contactedBy,
+            },
+          };
+        }),
+      );
+      return res.json(batchStats);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch pool batches' });
+    }
+  });
+
+  app.post('/api/admin/pool-batches/:id/redistribute', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) {
+      return res.status(401).json({ error: 'Invalid user context' });
+    }
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) {
+      return res.status(400).json({ error: actorTenantError });
+    }
+    const batchId = parseInteger(req.params.id);
+    const targetTeamId = parseOptionalTeamId(req.body?.targetTeamId);
+    if (batchId === null || batchId < 1) {
+      return res.status(400).json({ error: 'Invalid batch id' });
+    }
+    try {
+      const batch = await prisma.leadBatch.findFirst({ where: { id: batchId, tenantId: actor.tenantId }, select: { id: true } });
+      if (!batch) {
+        return res.status(404).json({ error: 'Batch not found' });
+      }
+      if (targetTeamId) {
+        const team = await prisma.team.findFirst({ where: { id: targetTeamId, tenantId: actor.tenantId }, select: { id: true } });
+        if (!team) {
+          return res.status(404).json({ error: 'Target team not found' });
+        }
+      }
+      const result = await prisma.lead.updateMany({
+        where: buildPoolWhere({ tenantId: actor.tenantId, batchId }),
+        data: { teamId: targetTeamId, isHiddenFromSales: false },
+      });
+      return res.json({ moved: result.count, message: `Moved ${result.count} unclaimed leads` });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to redistribute batch' });
+    }
+  });
+
+  app.post('/api/admin/pool-batches/:id/hide-unclaimed', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) {
+      return res.status(401).json({ error: 'Invalid user context' });
+    }
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) {
+      return res.status(400).json({ error: actorTenantError });
+    }
+    const batchId = parseInteger(req.params.id);
+    if (batchId === null || batchId < 1) {
+      return res.status(400).json({ error: 'Invalid batch id' });
+    }
+    try {
+      const result = await prisma.lead.updateMany({
+        where: buildPoolWhere({ tenantId: actor.tenantId, batchId }),
+        data: { isHiddenFromSales: true },
+      });
+      return res.json({ hidden: result.count, message: `Hidden ${result.count} unclaimed leads` });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to hide unclaimed leads' });
+    }
+  });
+
+  app.post('/api/admin/pool-batches/:id/unhide-unclaimed', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) {
+      return res.status(401).json({ error: 'Invalid user context' });
+    }
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) {
+      return res.status(400).json({ error: actorTenantError });
+    }
+    const batchId = parseInteger(req.params.id);
+    if (batchId === null || batchId < 1) {
+      return res.status(400).json({ error: 'Invalid batch id' });
+    }
+    try {
+      const result = await prisma.lead.updateMany({
+        where: buildPoolWhere({ tenantId: actor.tenantId, batchId, isHiddenFromSales: true }),
+        data: { isHiddenFromSales: false },
+      });
+      return res.json({ visible: result.count, message: `Restored ${result.count} leads` });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to restore unclaimed leads' });
     }
   });
 
@@ -1424,7 +1707,7 @@ async function startServer() {
 
         const claimed = await prisma.lead.updateMany({
           where: buildPoolWhere({ id: lead.id, teamId: lead.teamId ?? null, tenantId: actor.tenantId }),
-          data: { agentId: userId, status: POOL_STATUS, teamId: actor.teamId },
+          data: { agentId: userId, status: POOL_STATUS, teamId: actor.teamId, claimedAt: new Date() },
         });
 
         if (!claimed.count) {
@@ -1453,7 +1736,7 @@ async function startServer() {
       return res.status(400).json({ error: 'Invalid lead id' });
     }
 
-    const { name, status, source, notes, courseId, gender, whatsappPhone } = req.body;
+    const { name, status, source, notes, courseId, gender, whatsappPhone, profileDetails } = req.body;
     if (typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({ error: 'Name is required' });
     }
@@ -1472,6 +1755,7 @@ async function startServer() {
     if (hasWhatsappPhone && whatsappPhone && !normalizedWhatsappPhone) {
       return res.status(400).json({ error: 'Invalid whatsappPhone value' });
     }
+    const normalizedProfileDetails = normalizeNullableString(profileDetails, 2000);
 
     const actor = await getCurrentUserScope(req.user.id);
     if (!actor) {
@@ -1508,6 +1792,7 @@ async function startServer() {
             where: { id: leadId },
             data: {
               name: name.trim(),
+              hasProvidedName: hasValidProvidedName(name),
               notes,
               gender: normalizedGender,
               status: POOL_STATUS,
@@ -1515,6 +1800,8 @@ async function startServer() {
               agentId: null,
               courseId: null,
               whatsappPhone: null,
+              profileDetails: normalizedProfileDetails,
+              isHiddenFromSales: false,
             },
           });
         }
@@ -1523,6 +1810,7 @@ async function startServer() {
           where: { id: leadId },
           data: {
             name: name.trim(),
+            hasProvidedName: hasValidProvidedName(name),
             notes,
             gender: normalizedGender,
             status,
@@ -1530,12 +1818,14 @@ async function startServer() {
             agentId: req.user.id,
             courseId: Number.isNaN(parsedCourseId) ? null : parsedCourseId,
             whatsappPhone: hasWhatsappPhone ? normalizedWhatsappPhone : null,
+            profileDetails: normalizedProfileDetails,
           },
         });
 
         await tx.interaction.create({
           data: {
             leadId: updatedLead.id,
+            userId: req.user.id,
             type: source === 'SEND' ? 'SEND' : 'CALL',
             outcome: status || null,
             notes: notes || null,
@@ -1656,7 +1946,7 @@ async function startServer() {
     try {
       const assigned = await prisma.lead.updateMany({
         where: buildPoolWhere({ id: leadId, teamId: actor.teamId, tenantId: actor.tenantId }),
-        data: { agentId: req.user.id, status: POOL_STATUS },
+        data: { agentId: req.user.id, status: POOL_STATUS, claimedAt: new Date() },
       });
 
       if (!assigned.count) {
@@ -1808,6 +2098,7 @@ async function startServer() {
         await tx.interaction.create({
           data: {
             leadId,
+            userId: req.user.id,
             type: source === 'SEND' ? 'SEND' : 'CALL',
             outcome,
             notes: notes || null,
@@ -1915,7 +2206,7 @@ async function startServer() {
 
   // POST /api/leads (Manually add lead)
   app.post('/api/leads', authenticateToken, async (req, res) => {
-    const { name, phone, status, source, notes, courseId, gender, whatsappPhone, teamId: rawTeamId } = req.body;
+    const { name, phone, status, source, notes, courseId, gender, whatsappPhone, teamId: rawTeamId, profileDetails } = req.body;
     if (status && !LEAD_STATUSES.has(status)) {
       return res.status(400).json({ error: 'Invalid status value' });
     }
@@ -1930,6 +2221,7 @@ async function startServer() {
     if (whatsappPhone && !normalizedWhatsappPhone) {
       return res.status(400).json({ error: 'Invalid whatsappPhone value' });
     }
+    const normalizedProfileDetails = normalizeNullableString(profileDetails, 2000);
     const normalizedPhone = normalizeEgyptMobile(phone);
     if (!normalizedPhone) {
       return res.status(400).json({ error: 'Invalid phone value' });
@@ -1962,29 +2254,55 @@ async function startServer() {
         }
       }
 
-      const lead = await prisma.$transaction(async (tx) => {
-        const createdLead = await tx.lead.create({
-          data: {
-            name,
-            phone: normalizedPhone,
-            gender: normalizedGender,
-            status: effectiveStatus,
-            source: effectiveSource,
-            notes,
-            agentId: req.user.id, // Auto-assign to creator
-            teamId: effectiveTeamId,
-            tenantId: actor.tenantId,
-            courseId: Number.isNaN(parsedCourseId) ? null : parsedCourseId,
-            whatsappPhone: normalizedWhatsappPhone,
-          },
-        });
+      const existingLead = await prisma.lead.findFirst({
+        where: { tenantId: actor.tenantId, phone: normalizedPhone },
+        select: { id: true },
+      });
 
-        // Sales and team leads manual lead creation should count toward today's outreach KPI.
-        // Pool imports are done through /api/leads/bulk and never create interactions.
+      const lead = await prisma.$transaction(async (tx) => {
+        const createdLead = existingLead
+          ? await tx.lead.update({
+              where: { id: existingLead.id },
+              data: {
+                name: normalizeLeadName(name),
+                hasProvidedName: hasValidProvidedName(name),
+                gender: normalizedGender,
+                status: effectiveStatus,
+                source: effectiveSource,
+                notes,
+                profileDetails: normalizedProfileDetails,
+                agentId: req.user.id,
+                teamId: effectiveTeamId,
+                courseId: Number.isNaN(parsedCourseId) ? null : parsedCourseId,
+                whatsappPhone: normalizedWhatsappPhone,
+                isHiddenFromSales: false,
+                claimedAt: new Date(),
+              },
+            })
+          : await tx.lead.create({
+              data: {
+                name: normalizeLeadName(name),
+                hasProvidedName: hasValidProvidedName(name),
+                phone: normalizedPhone,
+                gender: normalizedGender,
+                status: effectiveStatus,
+                source: effectiveSource,
+                notes,
+                profileDetails: normalizedProfileDetails,
+                agentId: req.user.id,
+                teamId: effectiveTeamId,
+                tenantId: actor.tenantId,
+                courseId: Number.isNaN(parsedCourseId) ? null : parsedCourseId,
+                whatsappPhone: normalizedWhatsappPhone,
+                claimedAt: new Date(),
+              },
+            });
+
         if (req.user.role === 'SALES' || req.user.role === 'TEAM_LEAD') {
           await tx.interaction.create({
             data: {
               leadId: createdLead.id,
+              userId: req.user.id,
               type: effectiveSource === 'SEND' ? 'SEND' : 'CALL',
               outcome: createdLead.status || null,
               notes: createdLead.notes || null,
@@ -1995,7 +2313,7 @@ async function startServer() {
         return createdLead;
       });
 
-      res.status(201).json(lead);
+      res.status(existingLead ? 200 : 201).json(lead);
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Failed to create lead', details: error.message });
@@ -2005,7 +2323,7 @@ async function startServer() {
   // PUT /api/leads/:id (Update lead status/notes)
   app.put('/api/leads/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
-    const { name, status, notes, logCall, gender, whatsappPhone } = req.body;
+    const { name, status, notes, logCall, gender, whatsappPhone, profileDetails } = req.body;
     const leadId = parseInt(id);
     if (Number.isNaN(leadId)) {
       return res.status(400).json({ error: 'Invalid lead id' });
@@ -2026,6 +2344,8 @@ async function startServer() {
     if (hasWhatsappPhone && whatsappPhone && !normalizedWhatsappPhone) {
       return res.status(400).json({ error: 'Invalid whatsappPhone value' });
     }
+    const hasProfileDetails = Object.prototype.hasOwnProperty.call(req.body, 'profileDetails');
+    const normalizedProfileDetails = hasProfileDetails ? normalizeNullableString(profileDetails, 2000) : null;
 
     try {
       const actor = await getCurrentUserScope(req.user.id);
@@ -2050,10 +2370,12 @@ async function startServer() {
           where: { id: leadId },
           data: {
             name,
+            ...(typeof name === 'string' ? { hasProvidedName: hasValidProvidedName(name) } : {}),
             status,
             notes,
             ...(hasGender ? { gender: normalizedGender } : {}),
             ...(hasWhatsappPhone ? { whatsappPhone: normalizedWhatsappPhone } : {}),
+            ...(hasProfileDetails ? { profileDetails: normalizedProfileDetails } : {}),
           }
         });
 
@@ -2061,6 +2383,7 @@ async function startServer() {
           await tx.interaction.create({
             data: {
               leadId: leadId,
+              userId: req.user.id,
               type: 'CALL',
               outcome: status || null,
               notes: notes || null,
@@ -2329,26 +2652,37 @@ async function startServer() {
     if (actor.role === 'TEAM_LEAD' && !actor.teamId) {
       return res.status(400).json({ error: 'User is not assigned to a team' });
     }
-    const where = {
-      role: 'SALES',
-      tenantId: actor.tenantId,
-      ...(actor.role === 'TEAM_LEAD' ? { teamId: actor.teamId || -1 } : {}),
-      ...(typeof search === 'string' && search.trim()
-        ? {
-            OR: [
-              { name: { contains: search.trim() } },
-              { email: { contains: search.trim() } },
-            ],
-          }
-        : {}),
-    };
+    const normalizedSearch = typeof search === 'string' ? search.trim().toLowerCase() : '';
 
     try {
-      const users = await prisma.user.findMany({
-        where,
-        include: { employeeProfile: true },
-        orderBy: { name: 'asc' },
-      });
+      const fetchUsersByScope = async () => {
+        const teams = await prisma.team.findMany({
+          where: actor.role === 'ADMIN'
+            ? { tenantId: actor.tenantId }
+            : { id: actor.teamId || -1, tenantId: actor.tenantId },
+          include: {
+            users: {
+              include: { employeeProfile: true },
+              orderBy: { name: 'asc' },
+            },
+          },
+          orderBy: { name: 'asc' },
+        });
+        let scopedUsers = teams.flatMap((team) => team.users);
+        scopedUsers = scopedUsers.filter((user) => (actor.role === 'ADMIN'
+          ? user.role === 'SALES' || user.role === 'TEAM_LEAD'
+          : user.role === 'SALES'));
+        if (normalizedSearch) {
+          scopedUsers = scopedUsers.filter((user) => {
+            const name = String(user.name || '').toLowerCase();
+            const email = String(user.email || '').toLowerCase();
+            return name.includes(normalizedSearch) || email.includes(normalizedSearch);
+          });
+        }
+        return scopedUsers.sort((a, b) => a.name.localeCompare(b.name));
+      };
+
+      let users = await fetchUsersByScope();
 
       const missingProfileIds = users
         .filter((user) => !user.employeeProfile)
@@ -2356,49 +2690,26 @@ async function startServer() {
 
       if (missingProfileIds.length) {
         await Promise.all(missingProfileIds.map((userId) => ensureEmployeeProfile(userId)));
+        users = await fetchUsersByScope();
       }
 
-      const refreshedUsers = missingProfileIds.length
-        ? await prisma.user.findMany({
-            where,
-            include: { employeeProfile: true },
-            orderBy: { name: 'asc' },
-          })
-        : users;
-
-      const { start, end } = buildDayRange();
-      const agentIds = refreshedUsers.map((user) => user.id);
-      const calls = agentIds.length
-        ? await prisma.interaction.findMany({
-            where: {
-              type: 'CALL',
-              date: { gte: start, lt: end },
-              lead: { agentId: { in: agentIds }, tenantId: actor.tenantId },
-            },
-            select: {
-              lead: {
-                select: { agentId: true },
-              },
-            },
-          })
-        : [];
-
-      const callsByAgent = calls.reduce((acc, interaction) => {
-        const agentId = interaction.lead?.agentId;
-        if (agentId) {
-          acc[agentId] = (acc[agentId] || 0) + 1;
-        }
-        return acc;
-      }, {});
-
-      const result = refreshedUsers.map((user) => ({
+      const result = users.map((user) => ({
         id: user.id,
         name: user.name,
         email: user.email,
         role: user.role,
         teamId: user.teamId,
-        profile: user.employeeProfile,
-        callsToday: callsByAgent[user.id] || 0,
+        profile: {
+          id: user.employeeProfile?.id || null,
+          userId: user.employeeProfile?.userId || user.id,
+          department: user.employeeProfile?.department || 'Sales',
+          jobTitle: user.employeeProfile?.jobTitle || null,
+          phone: user.employeeProfile?.phone || null,
+          timezone: user.employeeProfile?.timezone || 'Africa/Cairo',
+          dailyCallTarget: Number(user.employeeProfile?.dailyCallTarget || 30),
+          isActive: typeof user.employeeProfile?.isActive === 'boolean' ? user.employeeProfile.isActive : true,
+        },
+        callsToday: 0,
       }));
 
       res.json(result);
@@ -2439,11 +2750,11 @@ async function startServer() {
         return res.status(404).json({ error: 'Employee not found' });
       }
 
-      if (user.role !== 'SALES') {
-        return res.status(400).json({ error: 'Profile can only be updated for sales agents' });
-      }
       if (actor.role === 'TEAM_LEAD' && user.teamId !== actor.teamId) {
         return res.status(403).json({ error: 'You can only update your team members' });
+      }
+      if (actor.role === 'TEAM_LEAD' && user.role !== 'SALES') {
+        return res.status(403).json({ error: 'You can only update sales members' });
       }
 
       const profile = await prisma.employeeProfile.upsert({

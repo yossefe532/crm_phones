@@ -22,6 +22,7 @@ model User {
   teamId          Int?
   team            Team?            @relation(fields: [teamId], references: [id])
   leads           Lead[]
+  interactions    Interaction[]
   employeeProfile EmployeeProfile?
   managedTeam     Team?            @relation("TeamLead")
 
@@ -34,13 +35,19 @@ model Lead {
   name         String
   phone        String
   whatsappPhone String?
+  profileDetails String?
   gender       String        @default("UNKNOWN") // MALE, FEMALE, UNKNOWN
+  hasProvidedName Boolean    @default(false)
+  isHiddenFromSales Boolean  @default(false)
+  claimedAt    DateTime?
   status       String        // NEW, INTERESTED, AGREED, REJECTED, HESITANT, SPONSOR, NO_ANSWER, RECONTACT
   source       String        // CALL, SEND, POOL
   notes        String?
   recontactAttempts Int      @default(0)
   nextRecontactAt DateTime?
   lastRecontactAt DateTime?
+  batchId      Int?
+  batch        LeadBatch?    @relation(fields: [batchId], references: [id])
   tenantId     Int
   tenant       Tenant        @relation(fields: [tenantId], references: [id])
   agentId      Int?
@@ -56,6 +63,9 @@ model Lead {
   @@index([teamId])
   @@index([status])
   @@index([nextRecontactAt])
+  @@index([batchId])
+  @@index([hasProvidedName])
+  @@index([isHiddenFromSales])
 }
 
 model Course {
@@ -69,10 +79,26 @@ model Interaction {
   id      Int      @id @default(autoincrement())
   leadId  Int
   lead    Lead     @relation(fields: [leadId], references: [id])
+  userId  Int?
+  user    User?    @relation(fields: [userId], references: [id])
   type    String   // CALL, SEND
   outcome String?
   notes   String?
   date    DateTime @default(now())
+}
+
+model LeadBatch {
+  id        Int      @id @default(autoincrement())
+  name      String
+  location  String?
+  tenantId  Int
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  leads     Lead[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([location])
 }
 
 model MessageTemplate {
@@ -123,6 +149,7 @@ model Tenant {
   users            User[]
   teams            Team[]
   leads            Lead[]
+  leadBatches      LeadBatch[]
   messageTemplates MessageTemplate[]
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
