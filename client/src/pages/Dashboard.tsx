@@ -24,6 +24,7 @@ interface Stats {
   agreed: number;
   hesitant: number;
   rejected: number;
+  noAnswer?: number;
   wrongNumber?: number;
   poolCount?: number;
   callsToday?: number;
@@ -87,6 +88,7 @@ export default function Dashboard() {
     { label: 'وافقوا', value: stats.agreed, icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-100' },
     { label: 'مترددين', value: stats.hesitant, icon: HelpCircle, color: 'text-amber-600', bg: 'bg-amber-100' },
     { label: 'رفضوا', value: stats.rejected, icon: XCircle, color: 'text-red-600', bg: 'bg-red-100' },
+    { label: 'لم يرد', value: stats.noAnswer || 0, icon: HelpCircle, color: 'text-sky-600', bg: 'bg-sky-100' },
     { label: 'أرقام خاطئة', value: stats.wrongNumber || 0, icon: XCircle, color: 'text-rose-600', bg: 'bg-rose-100' },
     { label: 'إعادة تواصل', value: stats.recontact || 0, icon: HelpCircle, color: 'text-indigo-600', bg: 'bg-indigo-100' },
   ];
@@ -99,7 +101,9 @@ export default function Dashboard() {
     { name: 'وافقوا', value: stats.agreed, color: '#10b981' },
     { name: 'مترددين', value: stats.hesitant, color: '#f59e0b' },
     { name: 'رفضوا', value: stats.rejected, color: '#ef4444' },
+    { name: 'لم يرد', value: stats.noAnswer || 0, color: '#0ea5e9' },
     { name: 'رقم خاطئ', value: stats.wrongNumber || 0, color: '#e11d48' },
+    { name: 'إعادة تواصل', value: stats.recontact || 0, color: '#6366f1' },
   ];
 
   return (
@@ -130,7 +134,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      <div className={`grid grid-cols-2 ${(user?.role === 'ADMIN' || user?.role === 'TEAM_LEAD') ? 'md:grid-cols-7' : 'md:grid-cols-6'} gap-4 md:gap-6`}>
+      <div className={`grid grid-cols-2 ${(user?.role === 'ADMIN' || user?.role === 'TEAM_LEAD') ? 'md:grid-cols-8' : 'md:grid-cols-7'} gap-4 md:gap-6`}>
         {statCards.map((stat, index) => (
           <div key={index} className="glass-card p-6 flex flex-col items-center justify-center text-center hover:scale-105 transition-transform duration-300">
             <div className={`w-12 h-12 rounded-2xl ${stat.bg} flex items-center justify-center mb-4 shadow-sm`}>

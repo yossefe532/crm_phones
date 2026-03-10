@@ -2405,8 +2405,17 @@ async function startServer() {
         where.teamId = actor.teamId;
       } else if (actor.role === 'SALES') {
         if (!actor.teamId) return res.status(400).json({ error: 'User is not assigned to a team' });
-        where.teamId = actor.teamId;
-        where.agentId = req.user.id;
+        where.OR = [
+          { agentId: req.user.id },
+          {
+            interactions: {
+              some: {
+                userId: req.user.id,
+                type: { in: ['CALL', 'SEND'] },
+              },
+            },
+          },
+        ];
       }
 
       const leads = await prisma.lead.findMany({
@@ -2673,13 +2682,22 @@ async function startServer() {
         where.teamId = actor.teamId;
       } else if (actor.role === 'SALES') {
         if (!actor.teamId) return res.status(400).json({ error: 'User is not assigned to a team' });
-        where.teamId = actor.teamId;
-        where.agentId = req.user.id;
+        where.OR = [
+          { agentId: req.user.id },
+          {
+            interactions: {
+              some: {
+                userId: req.user.id,
+                type: { in: ['CALL', 'SEND'] },
+              },
+            },
+          },
+        ];
       }
 
       const { start, end } = buildDayRange();
       const yesterdayRange = buildDayRangeWithOffset(-1);
-      const customerWhere = { ...where, source: { not: POOL_SOURCE }, status: { notIn: ['NO_ANSWER', 'RECONTACT', 'WRONG_NUMBER'] } };
+      const customerWhere = { ...where, source: { not: POOL_SOURCE } };
       const [total, agreed, hesitant, rejected, noAnswer, recontact, wrongNumber] = await Promise.all([
         prisma.lead.count({ where: customerWhere }),
         prisma.lead.count({ where: { ...where, source: { not: POOL_SOURCE }, status: 'AGREED' } }),
@@ -2703,16 +2721,18 @@ async function startServer() {
         dailyCallTarget = profile.dailyCallTarget;
         callsToday = await prisma.interaction.count({
           where: {
+            userId: req.user.id,
             type: { in: ['CALL', 'SEND'] },
             date: { gte: start, lt: end },
-              lead: { agentId: req.user.id, tenantId: actor.tenantId },
+            lead: { tenantId: actor.tenantId },
           },
         });
         callsYesterday = await prisma.interaction.count({
           where: {
+            userId: req.user.id,
             type: { in: ['CALL', 'SEND'] },
             date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
-            lead: { agentId: req.user.id, tenantId: actor.tenantId },
+            lead: { tenantId: actor.tenantId },
           },
         });
       } else if (actor.role === 'TEAM_LEAD') {

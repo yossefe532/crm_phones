@@ -65,7 +65,6 @@ export default function Leads() {
   }, []);
 
   const filteredLeads = leads
-    .filter((lead) => lead.source !== 'POOL' && lead.status !== 'NO_ANSWER' && lead.status !== 'RECONTACT')
     .filter((lead) =>
       lead.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       lead.phone.includes(searchTerm),
@@ -163,6 +162,9 @@ export default function Leads() {
             <option value="HESITANT">متردد</option>
             <option value="REJECTED">مرفوض</option>
             <option value="SPONSOR">سبونسر</option>
+            <option value="NO_ANSWER">لم يرد</option>
+            <option value="RECONTACT">إعادة تواصل</option>
+            <option value="WRONG_NUMBER">أرقام خاطئة</option>
           </select>
         </div>
       </div>
