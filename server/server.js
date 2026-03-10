@@ -175,6 +175,13 @@ const normalizeNullableString = (value, maxLength = 120) => {
   return trimmed.slice(0, maxLength);
 };
 
+const normalizeEmail = (value) => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return null;
+  return trimmed;
+};
+
 const normalizeLeadName = (value) => normalizeNullableString(value, 120) || UNKNOWN_LEAD_NAME;
 
 const hasValidProvidedName = (value) => {
@@ -694,13 +701,21 @@ async function startServer() {
     try {
       const hashedPassword = await bcrypt.hash(password, 10);
       const result = await prisma.$transaction(async (tx) => {
-        const team = await tx.team.create({
-          data: { name: teamName, tenantId: actor.tenantId },
+        let team = await tx.team.findFirst({
+          where: { name: teamName, tenantId: actor.tenantId },
           select: { id: true, name: true },
         });
-        const leadCapacityError = await assertTeamLeadCapacity(team.id);
-        if (leadCapacityError) {
-          throw new Error(leadCapacityError);
+        if (!team) {
+          team = await tx.team.create({
+            data: { name: teamName, tenantId: actor.tenantId },
+            select: { id: true, name: true },
+          });
+        }
+        const leadersCount = await tx.user.count({
+          where: { role: 'TEAM_LEAD', teamId: team.id },
+        });
+        if (leadersCount >= MAX_TEAM_LEADS_PER_TEAM) {
+          throw new Error(`Each team can have only ${MAX_TEAM_LEADS_PER_TEAM} team leads`);
         }
         const user = await tx.user.create({
           data: {
@@ -718,7 +733,7 @@ async function startServer() {
       return res.status(201).json(result);
     } catch (error) {
       if (error?.code === 'P2002') {
-        return res.status(409).json({ error: 'Team name or email already exists' });
+        return res.status(409).json({ error: 'Email already exists' });
       }
       console.error(error);
       return res.status(500).json({ error: error?.message || 'Failed to create team lead' });
