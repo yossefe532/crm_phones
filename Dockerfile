@@ -11,6 +11,7 @@ FROM node:20-bookworm-slim
 WORKDIR /app/server
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY server/package*.json ./
+COPY server/prisma ./prisma
 RUN npm ci
 COPY server/ ./
 COPY --from=client-build /client/dist ./public
