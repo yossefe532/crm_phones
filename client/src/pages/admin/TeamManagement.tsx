@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AlertCircle, CheckCircle2, Crown, KeyRound, Loader2, Trash2, UserPlus } from 'lucide-react';
 import api from '../../services/api';
 import { useAuth } from '../../store/useAuth';
@@ -15,6 +16,7 @@ interface TeamMember {
   email: string;
   role: 'TEAM_LEAD' | 'SALES';
   teamId: number;
+  callsToday?: number;
   employeeProfile?: TeamMemberProfile | null;
 }
 
@@ -29,8 +31,11 @@ interface TeamStats {
   rejected: number;
   noAnswer: number;
   recontact: number;
+  wrongNumber: number;
   callsToday: number;
+  callsYesterday: number;
   totalTarget: number;
+  targetAchievementPercent: number;
 }
 
 interface TeamBlock {
@@ -48,6 +53,7 @@ interface TeamOption {
 const MAX_TEAM_LEADS = 2;
 
 export default function TeamManagement() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [teams, setTeams] = useState<TeamBlock[]>([]);
   const [teamOptions, setTeamOptions] = useState<TeamOption[]>([]);
@@ -77,13 +83,18 @@ export default function TeamManagement() {
   const fetchTeams = async () => {
     setLoading(true);
     try {
-      const [managementRes, teamsRes] = await Promise.all([
+      const [managementRes, teamsRes] = await Promise.allSettled([
         api.get('/team-management'),
         api.get('/teams'),
       ]);
-      const incomingTeams: TeamBlock[] = managementRes.data || [];
+      if (managementRes.status !== 'fulfilled') {
+        throw managementRes.reason;
+      }
+      const incomingTeams: TeamBlock[] = managementRes.value.data || [];
       setTeams(incomingTeams);
-      const parsedTeams = (teamsRes.data || []).map((team: any) => ({ id: team.id, name: team.name }));
+      const parsedTeams = teamsRes.status === 'fulfilled'
+        ? (teamsRes.value.data || []).map((team: any) => ({ id: team.id, name: team.name }))
+        : incomingTeams.map((team) => ({ id: team.id, name: team.name }));
       setTeamOptions(parsedTeams);
       if (user?.role === 'TEAM_LEAD' && incomingTeams[0]?.id) {
         setForm((prev) => ({ ...prev, teamId: incomingTeams[0].id, role: 'SALES' }));
@@ -282,7 +293,7 @@ export default function TeamManagement() {
                 </p>
               </div>
               <div className="text-sm text-slate-600">
-                ليدز: {team.stats.totalLeads} • Pool: {team.stats.poolCount} • مكالمات اليوم: {team.stats.callsToday}
+                ليدز: {team.stats.totalLeads} • Pool: {team.stats.poolCount} • اليوم: {team.stats.callsToday} • أمس: {team.stats.callsYesterday}
               </div>
               {isAdmin && (
                 <button
@@ -296,13 +307,15 @@ export default function TeamManagement() {
               )}
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-8 gap-3">
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">وافقوا</p><p className="font-bold">{team.stats.agreed}</p></div>
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">مترددين</p><p className="font-bold">{team.stats.hesitant}</p></div>
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">رفضوا</p><p className="font-bold">{team.stats.rejected}</p></div>
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">مردوش</p><p className="font-bold">{team.stats.noAnswer}</p></div>
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">إعادة تواصل</p><p className="font-bold">{team.stats.recontact}</p></div>
+              <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">رقم خاطئ</p><p className="font-bold">{team.stats.wrongNumber}</p></div>
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">هدف اليوم</p><p className="font-bold">{team.stats.totalTarget}</p></div>
+              <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">تحقيق الهدف</p><p className="font-bold">{team.stats.targetAchievementPercent}%</p></div>
             </div>
 
             <div className="overflow-auto">
@@ -312,6 +325,7 @@ export default function TeamManagement() {
                     <th className="py-3">العضو</th>
                     <th className="py-3">الدور</th>
                     <th className="py-3">الهدف اليومي</th>
+                    <th className="py-3">مكالمات اليوم</th>
                     <th className="py-3">الحالة</th>
                     <th className="py-3">إجراءات</th>
                   </tr>
@@ -329,6 +343,7 @@ export default function TeamManagement() {
                         </span>
                       </td>
                       <td className="py-3">{member.employeeProfile?.dailyCallTarget || '-'}</td>
+                      <td className="py-3 font-semibold">{member.callsToday ?? 0}</td>
                       <td className="py-3">
                         <span className={`px-2 py-1 rounded-full text-xs ${member.employeeProfile?.isActive === false ? 'bg-slate-200 text-slate-600' : 'bg-emerald-100 text-emerald-700'}`}>
                           {member.employeeProfile?.isActive === false ? 'موقوف' : 'نشط'}
@@ -367,6 +382,12 @@ export default function TeamManagement() {
                               إزالة القيادة
                             </button>
                           )}
+                          <button
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-xs"
+                            onClick={() => navigate(`/admin/employees/${member.id}`)}
+                          >
+                            الأداء
+                          </button>
                           <button
                             className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-100 text-red-700 text-xs disabled:opacity-50"
                             onClick={() => removeMember(member)}

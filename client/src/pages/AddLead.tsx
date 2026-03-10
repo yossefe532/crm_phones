@@ -27,7 +27,7 @@ const leadSchema = z.object({
     .refine((value) => !value || EGYPT_MOBILE_REGEX.test(value), 'رقم الواتساب غير صحيح'),
   notes: z.string().optional(),
   profileDetails: z.string().optional(),
-  status: z.enum(['NEW', 'AGREED', 'HESITANT', 'REJECTED', 'SPONSOR', 'NO_ANSWER', 'RECONTACT']),
+  status: z.enum(['NEW', 'AGREED', 'HESITANT', 'REJECTED', 'SPONSOR', 'NO_ANSWER', 'RECONTACT', 'WRONG_NUMBER']),
   gender: z.enum(['MALE', 'FEMALE', 'UNKNOWN']),
 });
 
@@ -53,7 +53,7 @@ interface RecontactLeadPayload {
   whatsappPhone?: string;
   notes?: string;
   profileDetails?: string;
-  status?: 'NO_ANSWER' | 'RECONTACT' | 'NEW' | 'AGREED' | 'HESITANT' | 'REJECTED' | 'SPONSOR';
+  status?: 'NO_ANSWER' | 'RECONTACT' | 'NEW' | 'AGREED' | 'HESITANT' | 'REJECTED' | 'SPONSOR' | 'WRONG_NUMBER';
   source?: 'CALL' | 'SEND';
   gender?: 'MALE' | 'FEMALE' | 'UNKNOWN';
 }
@@ -106,8 +106,8 @@ export default function AddLead() {
       }
       try {
         const trainingRes = await assistantService.getTraining();
-        setTrainingTopic(trainingRes.topic || '');
-        setTrainingContext(trainingRes.context || '');
+        setTrainingTopic(trainingRes.effectiveTraining?.topic || '');
+        setTrainingContext(trainingRes.effectiveTraining?.context || '');
       } catch {
         setTrainingTopic('');
         setTrainingContext('');
@@ -290,9 +290,12 @@ export default function AddLead() {
       const saved = await assistantService.saveTraining({
         topic: trainingTopic,
         context: trainingContext,
+        scope: 'USER',
       });
-      setTrainingTopic(saved.topic || '');
-      setTrainingContext(saved.context || '');
+      const savedTopic = saved.training?.topic || trainingTopic;
+      const savedContext = saved.training?.context || trainingContext;
+      setTrainingTopic(savedTopic);
+      setTrainingContext(savedContext);
     } catch (err: any) {
       setAssistantError(err?.response?.data?.error || 'تعذر حفظ تدريب المساعد');
     } finally {
@@ -454,7 +457,7 @@ export default function AddLead() {
 
         <div className="space-y-4">
           <label className="text-sm font-bold text-slate-700">حالة العميل</label>
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-8 gap-4">
             {[
               { value: 'NEW', label: 'جديد', color: 'bg-slate-100 hover:bg-slate-200 text-slate-700' },
               { value: 'AGREED', label: 'موافق', color: 'bg-emerald-100 hover:bg-emerald-200 text-emerald-700' },
@@ -463,6 +466,7 @@ export default function AddLead() {
               { value: 'SPONSOR', label: 'سبونسر', color: 'bg-yellow-100 hover:bg-yellow-200 text-yellow-700' },
               { value: 'NO_ANSWER', label: 'مردش', color: 'bg-blue-100 hover:bg-blue-200 text-blue-700' },
               { value: 'RECONTACT', label: 'إعادة تواصل', color: 'bg-indigo-100 hover:bg-indigo-200 text-indigo-700' },
+              { value: 'WRONG_NUMBER', label: 'رقم خاطئ', color: 'bg-rose-100 hover:bg-rose-200 text-rose-700' },
             ].map((status) => (
               <label 
                 key={status.value}

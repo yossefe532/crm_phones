@@ -24,15 +24,17 @@ interface Stats {
   agreed: number;
   hesitant: number;
   rejected: number;
+  wrongNumber?: number;
   poolCount?: number;
   callsToday?: number;
+  callsYesterday?: number;
   dailyCallTarget?: number | null;
   recontact?: number;
   scope?: 'GLOBAL' | 'TEAM' | 'AGENT';
 }
 
 export default function Dashboard() {
-  const REFRESH_INTERVAL_MS = 250;
+  const REFRESH_INTERVAL_MS = 8000;
   const { user } = useAuth();
   const navigate = useNavigate();
   const [stats, setStats] = useState<Stats>({ total: 0, agreed: 0, hesitant: 0, rejected: 0, poolCount: 0 });
@@ -85,6 +87,7 @@ export default function Dashboard() {
     { label: 'وافقوا', value: stats.agreed, icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-100' },
     { label: 'مترددين', value: stats.hesitant, icon: HelpCircle, color: 'text-amber-600', bg: 'bg-amber-100' },
     { label: 'رفضوا', value: stats.rejected, icon: XCircle, color: 'text-red-600', bg: 'bg-red-100' },
+    { label: 'أرقام خاطئة', value: stats.wrongNumber || 0, icon: XCircle, color: 'text-rose-600', bg: 'bg-rose-100' },
     { label: 'إعادة تواصل', value: stats.recontact || 0, icon: HelpCircle, color: 'text-indigo-600', bg: 'bg-indigo-100' },
   ];
 
@@ -96,6 +99,7 @@ export default function Dashboard() {
     { name: 'وافقوا', value: stats.agreed, color: '#10b981' },
     { name: 'مترددين', value: stats.hesitant, color: '#f59e0b' },
     { name: 'رفضوا', value: stats.rejected, color: '#ef4444' },
+    { name: 'رقم خاطئ', value: stats.wrongNumber || 0, color: '#e11d48' },
   ];
 
   return (
@@ -126,7 +130,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      <div className={`grid grid-cols-2 ${(user?.role === 'ADMIN' || user?.role === 'TEAM_LEAD') ? 'md:grid-cols-6' : 'md:grid-cols-5'} gap-4 md:gap-6`}>
+      <div className={`grid grid-cols-2 ${(user?.role === 'ADMIN' || user?.role === 'TEAM_LEAD') ? 'md:grid-cols-7' : 'md:grid-cols-6'} gap-4 md:gap-6`}>
         {statCards.map((stat, index) => (
           <div key={index} className="glass-card p-6 flex flex-col items-center justify-center text-center hover:scale-105 transition-transform duration-300">
             <div className={`w-12 h-12 rounded-2xl ${stat.bg} flex items-center justify-center mb-4 shadow-sm`}>
@@ -147,6 +151,7 @@ export default function Dashboard() {
               {stats.callsToday || 0} / {stats.dailyCallTarget || 0}
             </p>
           </div>
+          <p className="text-xs text-slate-500 mb-2">مكالمات أمس: {stats.callsYesterday || 0}</p>
           <div className="w-full h-3 rounded-full bg-slate-200 overflow-hidden">
             <div
               className="h-full bg-emerald-500"

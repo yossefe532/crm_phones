@@ -14,12 +14,22 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 dotenv.config({ path: join(__dirname, '.env') });
+if (!process.env.DATABASE_URL) {
+  process.env.DATABASE_URL = process.env.RAILWAY_ENVIRONMENT
+    ? 'file:/data/crm.db'
+    : 'file:./prisma/dev.db';
+  console.warn(`[startup] DATABASE_URL was missing. Fallback applied: ${process.env.DATABASE_URL}`);
+}
+if (typeof process.env.DATABASE_URL === 'string' && process.env.DATABASE_URL.startsWith('file:') && !process.env.DATABASE_URL.includes('connection_limit=')) {
+  process.env.DATABASE_URL = `${process.env.DATABASE_URL}${process.env.DATABASE_URL.includes('?') ? '&' : '?'}connection_limit=1`;
+}
 runPrismaBootstrap(__dirname);
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const APP_RUNTIME_TAG = process.env.APP_RUNTIME_TAG || 'prisma-hotfix-20260310-r3';
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-change-this';
-const LEAD_STATUSES = new Set(['NEW', 'INTERESTED', 'AGREED', 'REJECTED', 'HESITANT', 'SPONSOR', 'NO_ANSWER', 'RECONTACT']);
+const LEAD_STATUSES = new Set(['NEW', 'INTERESTED', 'AGREED', 'REJECTED', 'HESITANT', 'SPONSOR', 'NO_ANSWER', 'RECONTACT', 'WRONG_NUMBER']);
 const LEAD_SOURCES = new Set(['CALL', 'SEND', 'POOL']);
 const LEAD_GENDERS = new Set(['MALE', 'FEMALE', 'UNKNOWN']);
 const USER_ROLES = new Set(['ADMIN', 'TEAM_LEAD', 'SALES']);
@@ -27,6 +37,7 @@ const MANAGEABLE_ROLES = new Set(['TEAM_LEAD', 'SALES']);
 const POOL_SOURCE = 'POOL';
 const POOL_STATUS = 'NEW';
 const UNKNOWN_LEAD_NAME = 'Unknown';
+const CLAIM_TIMEOUT_MINUTES = 15;
 const MAX_TEAM_LEADS_PER_TEAM = 2;
 const DEFAULT_TEMPLATES = [
   { status: 'AGREED', content: 'السلام عليكم {customer_title} {customer_name}، مع حضرتك {user_name} من إيديكون. تم تأكيد موافقتك، وبرجاء إرسال التفاصيل النهائية.' },
@@ -34,6 +45,7 @@ const DEFAULT_TEMPLATES = [
   { status: 'HESITANT', content: 'السلام عليكم {customer_title} {customer_name}، مع حضرتك {user_name}. حبيت أتابع مع حضرتك لو في أي استفسار.' },
   { status: 'SPONSOR', content: 'السلام عليكم {customer_title} {customer_name}، شكراً لاهتمامك بالرعاية. برجاء إرسال التفاصيل المطلوبة.' },
   { status: 'NO_ANSWER', content: 'السلام عليكم {customer_title} {customer_name}، حاولنا نتواصل مع حضرتك اليوم لكن ماكانش فيه رد. لو مناسب لحضرتك ابعتلنا وقت مناسب وهنكلمك فوراً.' },
+  { status: 'WRONG_NUMBER', content: 'نعتذر، تم تسجيل أن الرقم غير صحيح. برجاء التأكد من الرقم الصحيح إذا رغبت بالتواصل.' },
 ];
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '';
 const allowedOrigins = CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean);
@@ -43,6 +55,15 @@ app.use(cors({
   origin: allowedOrigins.length ? allowedOrigins : true,
 }));
 app.use(express.json({ limit: '10mb' }));
+console.log(`[runtime] tag=${APP_RUNTIME_TAG} prisma_engine=${process.env.PRISMA_CLIENT_ENGINE_TYPE || 'default'}`);
+
+app.get('/api/runtime-info', (_req, res) => {
+  res.json({
+    tag: APP_RUNTIME_TAG,
+    prismaEngine: process.env.PRISMA_CLIENT_ENGINE_TYPE || null,
+    databaseUrl: typeof process.env.DATABASE_URL === 'string' ? process.env.DATABASE_URL : null,
+  });
+});
 
 console.log('Initializing Prisma Client...');
 const prisma = new PrismaClient({
@@ -135,7 +156,7 @@ const assertTenantScopedUser = (user) => {
   return null;
 };
 
-const getCurrentUserScope = async (userId) => prisma.user.findUnique({
+const getCurrentUserScope = async (userId) => prisma.user.findFirst({
   where: { id: userId },
   select: {
     id: true,
@@ -168,10 +189,10 @@ const parseBulkLine = (line) => {
   if (!raw) return null;
   const parts = raw.split(',').map((part) => part.trim());
   const first = parts[0] || '';
-  const second = parts[1] || '';
+  const nameParts = parts.slice(1).filter(Boolean);
   const normalizedPhone = normalizeEgyptMobile(first);
   if (!normalizedPhone) return null;
-  const providedName = normalizeNullableString(second, 120);
+  const providedName = normalizeNullableString(nameParts.join(' '), 120);
   return {
     phone: normalizedPhone,
     name: providedName || UNKNOWN_LEAD_NAME,
@@ -425,6 +446,15 @@ const buildDayRange = () => {
   return { start, end };
 };
 
+const buildDayRangeWithOffset = (offsetDays = 0) => {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() + offsetDays);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start, end };
+};
+
 const safeCount = (value) => (Number.isFinite(value) && value >= 0 ? value : 0);
 
 const canAccessLeadByScope = ({ actor, lead, userId }) => {
@@ -479,7 +509,7 @@ async function startServer() {
 
     try {
       const normalizedEmail = email.trim().toLowerCase();
-      const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+      const user = await prisma.user.findFirst({ where: { email: normalizedEmail } });
       if (!user) return res.status(400).json({ error: 'Invalid credentials' });
 
       const storedPassword = user.password || '';
@@ -648,6 +678,53 @@ async function startServer() {
     }
   });
 
+  app.post('/api/admin/create-team-lead', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+    const teamName = normalizeTeamName(req.body?.teamName);
+    const leadName = normalizeNullableString(req.body?.name, 120);
+    const leadEmail = normalizeEmail(req.body?.email);
+    const password = req.body?.password;
+    if (!teamName) return res.status(400).json({ error: 'Team name is required' });
+    if (!leadName) return res.status(400).json({ error: 'Name is required' });
+    if (!leadEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(leadEmail)) return res.status(400).json({ error: 'Valid email is required' });
+    if (typeof password !== 'string' || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    try {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const result = await prisma.$transaction(async (tx) => {
+        const team = await tx.team.create({
+          data: { name: teamName, tenantId: actor.tenantId },
+          select: { id: true, name: true },
+        });
+        const leadCapacityError = await assertTeamLeadCapacity(team.id);
+        if (leadCapacityError) {
+          throw new Error(leadCapacityError);
+        }
+        const user = await tx.user.create({
+          data: {
+            name: leadName,
+            email: leadEmail,
+            password: hashedPassword,
+            role: 'TEAM_LEAD',
+            tenantId: actor.tenantId,
+            teamId: team.id,
+          },
+          select: { id: true, name: true, email: true, role: true, teamId: true },
+        });
+        return { team, user };
+      });
+      return res.status(201).json(result);
+    } catch (error) {
+      if (error?.code === 'P2002') {
+        return res.status(409).json({ error: 'Team name or email already exists' });
+      }
+      console.error(error);
+      return res.status(500).json({ error: error?.message || 'Failed to create team lead' });
+    }
+  });
+
   // POST /api/teams (Admin only)
   app.post('/api/teams', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
     const teamName = normalizeTeamName(req.body?.name);
@@ -764,7 +841,7 @@ async function startServer() {
       return res.status(400).json({ error: actorTenantError });
     }
     if (actor.role === 'TEAM_LEAD' && !actor.teamId) {
-      return res.status(400).json({ error: 'User is not assigned to a team' });
+      return res.json([]);
     }
 
     try {
@@ -792,13 +869,16 @@ async function startServer() {
       });
 
       const { start, end } = buildDayRange();
+      const yesterdayRange = buildDayRangeWithOffset(-1);
       const result = await Promise.all(teams.map(async (team) => {
-        const [agreed, hesitant, rejected, noAnswer, recontact, poolCount, callsToday] = await Promise.all([
+        const salesIds = team.users.filter((member) => member.role === 'SALES').map((member) => member.id);
+        const [agreed, hesitant, rejected, noAnswer, recontact, wrongNumber, poolCount, callsToday, callsYesterday, callsTodayRows] = await Promise.all([
           prisma.lead.count({ where: { tenantId: actor.tenantId, teamId: team.id, source: { not: POOL_SOURCE }, status: 'AGREED' } }),
           prisma.lead.count({ where: { tenantId: actor.tenantId, teamId: team.id, source: { not: POOL_SOURCE }, status: 'HESITANT' } }),
           prisma.lead.count({ where: { tenantId: actor.tenantId, teamId: team.id, source: { not: POOL_SOURCE }, status: 'REJECTED' } }),
           prisma.lead.count({ where: { tenantId: actor.tenantId, teamId: team.id, source: { not: POOL_SOURCE }, status: 'NO_ANSWER' } }),
           prisma.lead.count({ where: { tenantId: actor.tenantId, teamId: team.id, source: { not: POOL_SOURCE }, status: 'RECONTACT' } }),
+          prisma.lead.count({ where: { tenantId: actor.tenantId, teamId: team.id, source: { not: POOL_SOURCE }, status: 'WRONG_NUMBER' } }),
           prisma.lead.count({ where: buildPoolWhere({ tenantId: actor.tenantId, teamId: team.id }) }),
           prisma.interaction.count({
             where: {
@@ -807,16 +887,45 @@ async function startServer() {
               lead: { tenantId: actor.tenantId, teamId: team.id },
             },
           }),
+          prisma.interaction.count({
+            where: {
+              type: { in: ['CALL', 'SEND'] },
+              date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
+              lead: { tenantId: actor.tenantId, teamId: team.id },
+            },
+          }),
+          salesIds.length
+            ? prisma.interaction.findMany({
+                where: {
+                  userId: { in: salesIds },
+                  type: { in: ['CALL', 'SEND'] },
+                  date: { gte: start, lt: end },
+                },
+                select: { userId: true },
+              })
+            : Promise.resolve([]),
         ]);
         const salesMembers = team.users.filter((member) => member.role === 'SALES');
         const teamLeadMembers = team.users.filter((member) => member.role === 'TEAM_LEAD');
         const totalTarget = salesMembers.reduce((sum, member) => sum + (member.employeeProfile?.dailyCallTarget || 0), 0);
-        const nonPoolTotal = agreed + hesitant + rejected + noAnswer + recontact;
+        const nonPoolTotal = agreed + hesitant + rejected + noAnswer + recontact + wrongNumber;
+        const memberCallsMap = callsTodayRows.reduce((acc, item) => {
+          if (!item.userId) return acc;
+          acc.set(item.userId, (acc.get(item.userId) || 0) + 1);
+          return acc;
+        }, new Map());
+        const membersWithCalls = team.users.map((member) => ({
+          ...member,
+          callsToday: memberCallsMap.get(member.id) || 0,
+        }));
+        const targetAchievementPercent = totalTarget > 0
+          ? Number(((callsToday / totalTarget) * 100).toFixed(2))
+          : 0;
 
         return {
           id: team.id,
           name: team.name,
-          members: team.users,
+          members: membersWithCalls,
           stats: {
             membersCount: team.users.length,
             salesCount: salesMembers.length,
@@ -828,8 +937,11 @@ async function startServer() {
             rejected,
             noAnswer,
             recontact,
+            wrongNumber,
             callsToday,
+            callsYesterday,
             totalTarget,
+            targetAchievementPercent,
           },
         };
       }));
@@ -1291,17 +1403,33 @@ async function startServer() {
         resolvedBatchId = createdBatch.id;
       }
 
-      const existingPhones = new Set(
-        (await prisma.lead.findMany({
-          where: {
-            tenantId: actor.tenantId,
-            phone: { in: safeLeads.map((lead) => lead.phone) },
-          },
-          select: { phone: true },
-        })).map((lead) => lead.phone),
-      );
-      const freshLeads = safeLeads.filter((lead) => !existingPhones.has(lead.phone));
+      const existingLeads = await prisma.lead.findMany({
+        where: {
+          tenantId: actor.tenantId,
+          phone: { in: safeLeads.map((lead) => lead.phone) },
+        },
+        select: { id: true, phone: true, name: true, hasProvidedName: true },
+      });
+      const existingByPhone = new Map(existingLeads.map((lead) => [lead.phone, lead]));
+      const freshLeads = safeLeads.filter((lead) => !existingByPhone.has(lead.phone));
       const skippedExisting = safeLeads.length - freshLeads.length;
+      let upgradedNames = 0;
+      if (existingLeads.length) {
+        for (const row of safeLeads) {
+          const existing = existingByPhone.get(row.phone);
+          if (!existing) continue;
+          const shouldUpgradeName = row.hasProvidedName && (!existing.hasProvidedName || existing.name === UNKNOWN_LEAD_NAME);
+          if (!shouldUpgradeName) continue;
+          await prisma.lead.update({
+            where: { id: existing.id },
+            data: {
+              name: row.name,
+              hasProvidedName: true,
+            },
+          });
+          upgradedNames += 1;
+        }
+      }
       let inserted = 0;
       if (freshLeads.length) {
         const createRows = async (teamId) => {
@@ -1332,8 +1460,8 @@ async function startServer() {
           }
         }
       }
-      const batch = await prisma.leadBatch.findUnique({
-        where: { id: resolvedBatchId },
+      const batch = await prisma.leadBatch.findFirst({
+        where: { id: resolvedBatchId, tenantId: actor.tenantId },
         select: { id: true, name: true, location: true },
       });
       res.json({
@@ -1342,6 +1470,7 @@ async function startServer() {
         globalPool: useGlobalPool,
         inserted,
         skippedExisting,
+        upgradedNames,
         duplicatesInPayload,
         totalReceived: leads.length,
         validRows: safeLeads.length,
@@ -1515,40 +1644,51 @@ async function startServer() {
       });
       const batchStats = await Promise.all(
         batches.map(async (batch) => {
-          const [totalNumbers, namedCount, unnamedCount, inPoolVisible, hiddenUnclaimed, pulledCount, contactedCount, byUser] = await Promise.all([
+          const [totalNumbers, namedCount, unnamedCount, inPoolVisible, hiddenUnclaimed, pulledCount, contactedCount, agreedCount, hesitantCount, rejectedCount, noAnswerCount, recontactCount, wrongNumberCount, byUser] = await Promise.all([
             prisma.lead.count({ where: { tenantId: actor.tenantId, batchId: batch.id } }),
             prisma.lead.count({ where: { tenantId: actor.tenantId, batchId: batch.id, hasProvidedName: true } }),
             prisma.lead.count({ where: { tenantId: actor.tenantId, batchId: batch.id, hasProvidedName: false } }),
             prisma.lead.count({ where: buildPoolWhere({ tenantId: actor.tenantId, batchId: batch.id }) }),
             prisma.lead.count({ where: buildPoolWhere({ tenantId: actor.tenantId, batchId: batch.id, isHiddenFromSales: true }) }),
             prisma.lead.count({ where: { tenantId: actor.tenantId, batchId: batch.id, claimedAt: { not: null } } }),
-            prisma.interaction.groupBy({
-              by: ['leadId'],
+            prisma.interaction.findMany({
               where: {
                 lead: { tenantId: actor.tenantId, batchId: batch.id },
                 type: { in: ['CALL', 'SEND'] },
               },
+              select: { leadId: true },
+              distinct: ['leadId'],
             }).then((rows) => rows.length),
-            prisma.interaction.groupBy({
-              by: ['userId'],
+            prisma.lead.count({ where: { tenantId: actor.tenantId, batchId: batch.id, status: 'AGREED' } }),
+            prisma.lead.count({ where: { tenantId: actor.tenantId, batchId: batch.id, status: 'HESITANT' } }),
+            prisma.lead.count({ where: { tenantId: actor.tenantId, batchId: batch.id, status: 'REJECTED' } }),
+            prisma.lead.count({ where: { tenantId: actor.tenantId, batchId: batch.id, status: 'NO_ANSWER' } }),
+            prisma.lead.count({ where: { tenantId: actor.tenantId, batchId: batch.id, status: 'RECONTACT' } }),
+            prisma.lead.count({ where: { tenantId: actor.tenantId, batchId: batch.id, status: 'WRONG_NUMBER' } }),
+            prisma.interaction.findMany({
               where: {
                 userId: { not: null },
                 lead: { tenantId: actor.tenantId, batchId: batch.id },
                 type: { in: ['CALL', 'SEND'] },
               },
-              _count: { _all: true },
+              select: { userId: true },
             }),
           ]);
-          const userIds = byUser.map((row) => row.userId).filter((id) => Number.isInteger(id));
+          const userCountMap = byUser.reduce((acc, row) => {
+            if (!row.userId) return acc;
+            acc.set(row.userId, (acc.get(row.userId) || 0) + 1);
+            return acc;
+          }, new Map());
+          const userIds = [...userCountMap.keys()];
           const users = userIds.length
             ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } })
             : [];
           const userMap = new Map(users.map((user) => [user.id, user.name]));
-          const contactedBy = byUser
-            .map((row) => ({
-              userId: row.userId,
-              name: userMap.get(row.userId) || 'غير معروف',
-              interactions: row._count?._all || 0,
+          const contactedBy = [...userCountMap.entries()]
+            .map(([userId, interactions]) => ({
+              userId,
+              name: userMap.get(userId) || 'غير معروف',
+              interactions,
             }))
             .sort((a, b) => b.interactions - a.interactions)
             .slice(0, 8);
@@ -1565,6 +1705,12 @@ async function startServer() {
               hiddenUnclaimed,
               pulledCount,
               contactedCount,
+              agreedCount,
+              hesitantCount,
+              rejectedCount,
+              noAnswerCount,
+              recontactCount,
+              wrongNumberCount,
               contactedBy,
             },
           };
@@ -1663,6 +1809,49 @@ async function startServer() {
     }
   });
 
+  app.get('/api/admin/pool-batches/:id/export-active-leads', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+    const batchId = parseInteger(req.params.id);
+    if (batchId === null || batchId < 1) return res.status(400).json({ error: 'Invalid batch id' });
+    try {
+      const rows = await prisma.lead.findMany({
+        where: {
+          tenantId: actor.tenantId,
+          batchId,
+          status: 'AGREED',
+          agentId: { not: null },
+        },
+        include: {
+          agent: { select: { name: true, email: true } },
+          team: { select: { name: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      const header = ['name', 'phone', 'team', 'agentName', 'agentEmail', 'status', 'notes', 'createdAt'];
+      const csv = [header, ...rows.map((row) => [
+        row.name,
+        row.phone,
+        row.team?.name || '',
+        row.agent?.name || '',
+        row.agent?.email || '',
+        row.status,
+        row.notes || '',
+        row.createdAt.toISOString(),
+      ])]
+        .map((cols) => cols.map((col) => `"${String(col).replace(/"/g, '""')}"`).join(','))
+        .join('\n');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="batch-${batchId}-active-leads.csv"`);
+      return res.send(`\uFEFF${csv}`);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to export active leads' });
+    }
+  });
+
   // POST /api/leads/claim (Sales - Get a lead from pool)
   app.post('/api/leads/claim', authenticateToken, async (req, res) => {
     if (req.user.role !== 'SALES') {
@@ -1684,6 +1873,21 @@ async function startServer() {
 
     const userId = req.user.id;
     try {
+      const staleThreshold = new Date(Date.now() - CLAIM_TIMEOUT_MINUTES * 60 * 1000);
+      await prisma.lead.updateMany({
+        where: {
+          tenantId: actor.tenantId,
+          teamId: actor.teamId,
+          source: POOL_SOURCE,
+          status: POOL_STATUS,
+          agentId: { not: null },
+          claimedAt: { lt: staleThreshold },
+        },
+        data: {
+          agentId: null,
+          claimedAt: null,
+        },
+      });
       // Guard against race conditions: find candidate then conditionally claim it.
       const maxAttempts = 5;
       const claimScope = buildPoolWhere({
@@ -1714,7 +1918,7 @@ async function startServer() {
           continue;
         }
 
-        const updatedLead = await prisma.lead.findUnique({ where: { id: lead.id } });
+        const updatedLead = await prisma.lead.findFirst({ where: { id: lead.id } });
         return res.json(updatedLead);
       }
 
@@ -1772,7 +1976,7 @@ async function startServer() {
 
     const parsedCourseId = courseId ? parseInt(courseId, 10) : null;
     try {
-      const existingLead = await prisma.lead.findUnique({ where: { id: leadId } });
+      const existingLead = await prisma.lead.findFirst({ where: { id: leadId } });
       if (!existingLead) {
         return res.status(404).json({ error: 'Lead not found' });
       }
@@ -1798,6 +2002,7 @@ async function startServer() {
               status: POOL_STATUS,
               source: POOL_SOURCE,
               agentId: null,
+              claimedAt: null,
               courseId: null,
               whatsappPhone: null,
               profileDetails: normalizedProfileDetails,
@@ -1953,7 +2158,7 @@ async function startServer() {
         return res.status(409).json({ error: 'Lead is no longer available' });
       }
 
-      const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+      const lead = await prisma.lead.findFirst({ where: { id: leadId } });
       res.json(lead);
     } catch (error) {
       console.error(error);
@@ -2019,7 +2224,7 @@ async function startServer() {
       if (!actor) {
         return res.status(401).json({ error: 'Invalid user context' });
       }
-      const existingLead = await prisma.lead.findUnique({ where: { id: leadId } });
+      const existingLead = await prisma.lead.findFirst({ where: { id: leadId } });
       if (!existingLead) {
         return res.status(404).json({ error: 'Lead not found' });
       }
@@ -2071,7 +2276,7 @@ async function startServer() {
       if (!actor) {
         return res.status(401).json({ error: 'Invalid user context' });
       }
-      const existingLead = await prisma.lead.findUnique({ where: { id: leadId } });
+      const existingLead = await prisma.lead.findFirst({ where: { id: leadId } });
       if (!existingLead) {
         return res.status(404).json({ error: 'Lead not found' });
       }
@@ -2132,7 +2337,7 @@ async function startServer() {
       if (actorTenantError) {
         return res.status(400).json({ error: actorTenantError });
       }
-      const lead = await prisma.lead.findUnique({
+      const lead = await prisma.lead.findFirst({
         where: { id: leadId },
         include: { agent: { select: { id: true, name: true, email: true } } },
       });
@@ -2356,7 +2561,7 @@ async function startServer() {
       if (actorTenantError) {
         return res.status(400).json({ error: actorTenantError });
       }
-      const existingLead = await prisma.lead.findUnique({ where: { id: leadId } });
+      const existingLead = await prisma.lead.findFirst({ where: { id: leadId } });
       if (!existingLead) {
         return res.status(404).json({ error: 'Lead not found' });
       }
@@ -2458,19 +2663,22 @@ async function startServer() {
       }
 
       const { start, end } = buildDayRange();
-      const customerWhere = { ...where, source: { not: POOL_SOURCE }, status: { notIn: ['NO_ANSWER', 'RECONTACT'] } };
-      const [total, agreed, hesitant, rejected, noAnswer, recontact] = await Promise.all([
+      const yesterdayRange = buildDayRangeWithOffset(-1);
+      const customerWhere = { ...where, source: { not: POOL_SOURCE }, status: { notIn: ['NO_ANSWER', 'RECONTACT', 'WRONG_NUMBER'] } };
+      const [total, agreed, hesitant, rejected, noAnswer, recontact, wrongNumber] = await Promise.all([
         prisma.lead.count({ where: customerWhere }),
         prisma.lead.count({ where: { ...where, source: { not: POOL_SOURCE }, status: 'AGREED' } }),
         prisma.lead.count({ where: { ...where, source: { not: POOL_SOURCE }, status: 'HESITANT' } }),
         prisma.lead.count({ where: { ...where, source: { not: POOL_SOURCE }, status: 'REJECTED' } }),
         prisma.lead.count({ where: { ...where, source: { not: POOL_SOURCE }, status: 'NO_ANSWER' } }),
         prisma.lead.count({ where: { ...where, source: { not: POOL_SOURCE }, status: 'RECONTACT' } }),
+        prisma.lead.count({ where: { ...where, source: { not: POOL_SOURCE }, status: 'WRONG_NUMBER' } }),
       ]);
 
       // If Admin, also get pool count
       let poolCount = 0;
       let callsToday = 0;
+      let callsYesterday = 0;
       let dailyCallTarget = null;
       let teamMembersPerformance = [];
       if (actor.role === 'ADMIN') {
@@ -2483,6 +2691,13 @@ async function startServer() {
             type: { in: ['CALL', 'SEND'] },
             date: { gte: start, lt: end },
               lead: { agentId: req.user.id, tenantId: actor.tenantId },
+          },
+        });
+        callsYesterday = await prisma.interaction.count({
+          where: {
+            type: { in: ['CALL', 'SEND'] },
+            date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
+            lead: { agentId: req.user.id, tenantId: actor.tenantId },
           },
         });
       } else if (actor.role === 'TEAM_LEAD') {
@@ -2508,17 +2723,29 @@ async function startServer() {
               },
             })
           : 0;
+        callsYesterday = salesIds.length
+          ? await prisma.interaction.count({
+              where: {
+                type: { in: ['CALL', 'SEND'] },
+                date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
+                lead: { agentId: { in: salesIds }, tenantId: actor.tenantId },
+              },
+            })
+          : 0;
         if (salesIds.length) {
-          const callsByAgent = await prisma.interaction.groupBy({
-            by: ['leadId'],
+          const callsByAgentRows = await prisma.interaction.findMany({
             where: {
               type: { in: ['CALL', 'SEND'] },
               date: { gte: start, lt: end },
               lead: { agentId: { in: salesIds }, tenantId: actor.tenantId },
             },
-            _count: { _all: true },
+            select: { leadId: true },
           });
-          const leadIds = callsByAgent.map((item) => item.leadId);
+          const callsByAgentMap = callsByAgentRows.reduce((acc, row) => {
+            acc.set(row.leadId, (acc.get(row.leadId) || 0) + 1);
+            return acc;
+          }, new Map());
+          const leadIds = [...callsByAgentMap.keys()];
           const mappedLeads = leadIds.length
             ? await prisma.lead.findMany({
                 where: { id: { in: leadIds }, tenantId: actor.tenantId },
@@ -2526,7 +2753,7 @@ async function startServer() {
               })
             : [];
           const interactionByAgent = mappedLeads.reduce((acc, lead) => {
-            const leadMetric = callsByAgent.find((item) => item.leadId === lead.id)?._count?._all || 0;
+            const leadMetric = callsByAgentMap.get(lead.id) || 0;
             if (lead.agentId) acc[lead.agentId] = (acc[lead.agentId] || 0) + leadMetric;
             return acc;
           }, {});
@@ -2543,8 +2770,10 @@ async function startServer() {
       const safeRejected = safeCount(rejected);
       const safeNoAnswer = safeCount(noAnswer);
       const safeRecontact = safeCount(recontact);
+      const safeWrongNumber = safeCount(wrongNumber);
       const safePoolCount = safeCount(poolCount);
       const safeCallsToday = safeCount(callsToday);
+      const safeCallsYesterday = safeCount(callsYesterday);
       const safeDailyCallTarget = Number.isFinite(dailyCallTarget) && dailyCallTarget > 0 ? dailyCallTarget : null;
       const completionRate = safeDailyCallTarget
         ? Math.min(100, Number(((safeCallsToday / safeDailyCallTarget) * 100).toFixed(2)))
@@ -2557,8 +2786,10 @@ async function startServer() {
         rejected: safeRejected,
         noAnswer: safeNoAnswer,
         recontact: safeRecontact,
+        wrongNumber: safeWrongNumber,
         poolCount: safePoolCount,
         callsToday: safeCallsToday,
+        callsYesterday: safeCallsYesterday,
         dailyCallTarget: safeDailyCallTarget,
         byStatus: {
           AGREED: safeAgreed,
@@ -2566,9 +2797,11 @@ async function startServer() {
           REJECTED: safeRejected,
           NO_ANSWER: safeNoAnswer,
           RECONTACT: safeRecontact,
+          WRONG_NUMBER: safeWrongNumber,
         },
         kpi: {
           callsToday: safeCallsToday,
+          callsYesterday: safeCallsYesterday,
           dailyCallTarget: safeDailyCallTarget,
           remainingCalls: safeDailyCallTarget ? Math.max(0, safeDailyCallTarget - safeCallsToday) : null,
           completionRate,
@@ -2654,6 +2887,43 @@ async function startServer() {
     }
     const normalizedSearch = typeof search === 'string' ? search.trim().toLowerCase() : '';
 
+    const fallbackEmployees = async () => {
+      const where = actor.role === 'ADMIN'
+        ? { tenantId: actor.tenantId, role: { in: ['SALES', 'TEAM_LEAD'] } }
+        : { tenantId: actor.tenantId, teamId: actor.teamId || -1, role: 'SALES' };
+      const baseUsers = await prisma.user.findMany({
+        where,
+        orderBy: { name: 'asc' },
+        select: { id: true, name: true, email: true, role: true, teamId: true },
+      });
+      const filteredUsers = normalizedSearch
+        ? baseUsers.filter((user) => {
+            const name = String(user.name || '').toLowerCase();
+            const email = String(user.email || '').toLowerCase();
+            return name.includes(normalizedSearch) || email.includes(normalizedSearch);
+          })
+        : baseUsers;
+      return filteredUsers.map((user) => ({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        teamId: user.teamId,
+        profile: {
+          id: null,
+          userId: user.id,
+          department: 'Sales',
+          jobTitle: null,
+          phone: null,
+          timezone: 'Africa/Cairo',
+          dailyCallTarget: 30,
+          isActive: true,
+        },
+        callsToday: 0,
+        callsYesterday: 0,
+      }));
+    };
+
     try {
       const fetchUsersByScope = async () => {
         const teams = await prisma.team.findMany({
@@ -2692,6 +2962,39 @@ async function startServer() {
         await Promise.all(missingProfileIds.map((userId) => ensureEmployeeProfile(userId)));
         users = await fetchUsersByScope();
       }
+      const { start, end } = buildDayRange();
+      const yesterdayRange = buildDayRangeWithOffset(-1);
+      const userIds = users.map((user) => user.id);
+      const [callsTodayRows, callsYesterdayRows] = userIds.length
+        ? await Promise.all([
+            prisma.interaction.findMany({
+              where: {
+                userId: { in: userIds },
+                type: { in: ['CALL', 'SEND'] },
+                date: { gte: start, lt: end },
+              },
+              select: { userId: true },
+            }),
+            prisma.interaction.findMany({
+              where: {
+                userId: { in: userIds },
+                type: { in: ['CALL', 'SEND'] },
+                date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
+              },
+              select: { userId: true },
+            }),
+          ])
+        : [[], []];
+      const callsTodayMap = callsTodayRows.reduce((acc, row) => {
+        if (!row.userId) return acc;
+        acc.set(row.userId, (acc.get(row.userId) || 0) + 1);
+        return acc;
+      }, new Map());
+      const callsYesterdayMap = callsYesterdayRows.reduce((acc, row) => {
+        if (!row.userId) return acc;
+        acc.set(row.userId, (acc.get(row.userId) || 0) + 1);
+        return acc;
+      }, new Map());
 
       const result = users.map((user) => ({
         id: user.id,
@@ -2709,13 +3012,20 @@ async function startServer() {
           dailyCallTarget: Number(user.employeeProfile?.dailyCallTarget || 30),
           isActive: typeof user.employeeProfile?.isActive === 'boolean' ? user.employeeProfile.isActive : true,
         },
-        callsToday: 0,
+        callsToday: callsTodayMap.get(user.id) || 0,
+        callsYesterday: callsYesterdayMap.get(user.id) || 0,
       }));
 
       res.json(result);
     } catch (error) {
       console.error(error);
-      res.status(500).json({ error: 'Failed to fetch employee profiles' });
+      try {
+        const fallback = await fallbackEmployees();
+        return res.json(fallback);
+      } catch (fallbackError) {
+        console.error(fallbackError);
+        return res.status(500).json({ error: 'Failed to fetch employee profiles' });
+      }
     }
   });
 
@@ -2770,9 +3080,125 @@ async function startServer() {
     }
   });
 
+  app.get('/api/admin/employees/:id/performance', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+    const userId = parseInteger(req.params.id);
+    if (userId === null || userId < 1) return res.status(400).json({ error: 'Invalid employee id' });
+    const days = Math.min(60, Math.max(7, parseInteger(normalizeSingleQueryValue(req.query.days)) || 14));
+    try {
+      const employee = await prisma.user.findFirst({
+        where: { id: userId, tenantId: actor.tenantId, role: { in: ['SALES', 'TEAM_LEAD'] } },
+        include: { employeeProfile: true, team: { select: { id: true, name: true } } },
+      });
+      if (!employee) return res.status(404).json({ error: 'Employee not found' });
+      if (actor.role === 'TEAM_LEAD' && employee.teamId !== actor.teamId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+      const end = new Date();
+      end.setHours(23, 59, 59, 999);
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      start.setDate(start.getDate() - (days - 1));
+      const interactions = await prisma.interaction.findMany({
+        where: {
+          userId: employee.id,
+          type: { in: ['CALL', 'SEND'] },
+          date: { gte: start, lte: end },
+        },
+        select: { date: true, outcome: true, lead: { select: { batchId: true } } },
+      });
+      const seriesMap = new Map();
+      for (let i = 0; i < days; i++) {
+        const date = new Date(start);
+        date.setDate(start.getDate() + i);
+        const key = date.toISOString().slice(0, 10);
+        seriesMap.set(key, { date: key, calls: 0, agreed: 0, rejected: 0, hesitant: 0, wrongNumber: 0 });
+      }
+      interactions.forEach((item) => {
+        const key = item.date.toISOString().slice(0, 10);
+        const row = seriesMap.get(key);
+        if (!row) return;
+        row.calls += 1;
+        if (item.outcome === 'AGREED') row.agreed += 1;
+        if (item.outcome === 'REJECTED') row.rejected += 1;
+        if (item.outcome === 'HESITANT') row.hesitant += 1;
+        if (item.outcome === 'WRONG_NUMBER') row.wrongNumber += 1;
+      });
+      const series = [...seriesMap.values()];
+      const totalCalls = series.reduce((sum, row) => sum + row.calls, 0);
+      const target = employee.employeeProfile?.dailyCallTarget || 0;
+      const totalTarget = target * days;
+      const completionRate = totalTarget > 0 ? Number(((totalCalls / totalTarget) * 100).toFixed(2)) : 0;
+      return res.json({
+        employee: {
+          id: employee.id,
+          name: employee.name,
+          email: employee.email,
+          team: employee.team,
+          isActive: employee.employeeProfile?.isActive ?? true,
+          dailyCallTarget: target,
+        },
+        periodDays: days,
+        totals: {
+          calls: totalCalls,
+          agreed: series.reduce((sum, row) => sum + row.agreed, 0),
+          rejected: series.reduce((sum, row) => sum + row.rejected, 0),
+          hesitant: series.reduce((sum, row) => sum + row.hesitant, 0),
+          wrongNumber: series.reduce((sum, row) => sum + row.wrongNumber, 0),
+          target: totalTarget,
+          completionRate,
+        },
+        series,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch employee performance' });
+    }
+  });
+
+  app.get('/api/admin/employees/export-active', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const actor = await getCurrentUserScope(req.user.id);
+    if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+    const actorTenantError = assertTenantScopedUser(actor);
+    if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+    try {
+      const users = await prisma.user.findMany({
+        where: {
+          tenantId: actor.tenantId,
+          role: 'SALES',
+          ...(actor.role === 'TEAM_LEAD' ? { teamId: actor.teamId || -1 } : {}),
+          employeeProfile: { isActive: true },
+        },
+        include: { team: { select: { name: true } }, employeeProfile: true },
+        orderBy: { name: 'asc' },
+      });
+      const header = ['name', 'email', 'team', 'dailyCallTarget', 'department', 'jobTitle', 'phone'];
+      const rows = users.map((user) => [
+        user.name,
+        user.email,
+        user.team?.name || '',
+        String(user.employeeProfile?.dailyCallTarget || 0),
+        user.employeeProfile?.department || '',
+        user.employeeProfile?.jobTitle || '',
+        user.employeeProfile?.phone || '',
+      ]);
+      const csv = [header, ...rows]
+        .map((cols) => cols.map((col) => `"${String(col).replace(/"/g, '""')}"`).join(','))
+        .join('\n');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="active-employees.csv"');
+      return res.send(`\uFEFF${csv}`);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to export active employees' });
+    }
+  });
+
   // --- Template Routes ---
 
-  // GET /api/templates
   app.get('/api/templates', authenticateToken, async (req, res) => {
     try {
       const actor = await getCurrentUserScope(req.user.id);
@@ -2799,17 +3225,28 @@ async function startServer() {
         where: { tenantId: actor.tenantId },
         orderBy: { id: 'asc' },
       });
-      res.json(templates);
+      const bucket = readAssistantTraining();
+      const tenantKey = String(actor.tenantId);
+      const tenantBucket = bucket[tenantKey] || {};
+      const userOverrides = tenantBucket?.templates?.users?.[String(actor.id)] || {};
+      const response = templates.map((template) => {
+        const override = userOverrides?.[template.status];
+        if (typeof override === 'string' && override.trim()) {
+          return { ...template, content: override, scope: 'USER' };
+        }
+        return { ...template, scope: 'TENANT' };
+      });
+      res.json(response);
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Failed to fetch templates' });
     }
   });
 
-  // PUT /api/templates/:id (Admin only)
-  app.put('/api/templates/:id', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+  app.put('/api/templates/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const { content } = req.body;
+    const scope = typeof req.body?.scope === 'string' ? req.body.scope.trim().toUpperCase() : 'USER';
     try {
       const actor = await getCurrentUserScope(req.user.id);
       if (!actor) {
@@ -2823,17 +3260,36 @@ async function startServer() {
       if (templateId === null || templateId < 1) {
         return res.status(400).json({ error: 'Invalid template id' });
       }
-      const template = await prisma.messageTemplate.updateMany({
+      const template = await prisma.messageTemplate.findFirst({
         where: { id: templateId, tenantId: actor.tenantId },
-        data: { content }
       });
-      if (!template.count) {
+      if (!template) {
         return res.status(404).json({ error: 'Template not found' });
       }
-      const updatedTemplate = await prisma.messageTemplate.findFirst({
-        where: { id: templateId, tenantId: actor.tenantId },
-      });
-      res.json(updatedTemplate);
+      if (scope === 'TENANT') {
+        if (actor.role !== 'ADMIN') {
+          return res.status(403).json({ error: 'Only admin can update tenant default template' });
+        }
+        await prisma.messageTemplate.update({
+          where: { id: templateId },
+          data: { content },
+        });
+        const updatedTemplate = await prisma.messageTemplate.findFirst({
+          where: { id: templateId, tenantId: actor.tenantId },
+        });
+        return res.json({ ...updatedTemplate, scope: 'TENANT' });
+      }
+      const bucket = readAssistantTraining();
+      const tenantKey = String(actor.tenantId);
+      bucket[tenantKey] = bucket[tenantKey] || {};
+      bucket[tenantKey].templates = bucket[tenantKey].templates || {};
+      bucket[tenantKey].templates.users = bucket[tenantKey].templates.users || {};
+      bucket[tenantKey].templates.users[String(actor.id)] = {
+        ...(bucket[tenantKey].templates.users[String(actor.id)] || {}),
+        [template.status]: content,
+      };
+      writeAssistantTraining(bucket);
+      return res.json({ ...template, content, scope: 'USER' });
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Failed to update template' });
@@ -2852,8 +3308,22 @@ async function startServer() {
       }
       const bucket = readAssistantTraining();
       const key = String(actor.tenantId);
-      const training = bucket[key] || { topic: '', context: '', updatedAt: null };
-      return res.json(training);
+      const tenantBucket = bucket[key] || {};
+      const globalTraining = tenantBucket.globalTraining || {
+        topic: tenantBucket.topic || '',
+        context: tenantBucket.context || '',
+        updatedAt: tenantBucket.updatedAt || null,
+      };
+      const userTrainingMap = tenantBucket.userTraining || {};
+      const userTraining = userTrainingMap[String(actor.id)] || { topic: '', context: '', updatedAt: null };
+      return res.json({
+        globalTraining,
+        userTraining,
+        effectiveTraining: {
+          topic: userTraining.topic || globalTraining.topic || '',
+          context: userTraining.context || globalTraining.context || '',
+        },
+      });
     } catch (error) {
       console.error(error);
       return res.status(500).json({ error: 'Failed to load assistant training' });
@@ -2863,6 +3333,7 @@ async function startServer() {
   app.post('/api/assistant/training', authenticateToken, async (req, res) => {
     const topic = normalizeNullableString(req.body?.topic, 120) || '';
     const context = normalizeNullableString(req.body?.context, 2000) || '';
+    const scope = typeof req.body?.scope === 'string' ? req.body.scope.trim().toUpperCase() : 'USER';
     if (!topic && !context) {
       return res.status(400).json({ error: 'Training topic or context is required' });
     }
@@ -2877,9 +3348,19 @@ async function startServer() {
       }
       const bucket = readAssistantTraining();
       const key = String(actor.tenantId);
-      bucket[key] = { topic, context, updatedAt: new Date().toISOString() };
+      bucket[key] = bucket[key] || {};
+      if (scope === 'GLOBAL') {
+        if (actor.role !== 'ADMIN') {
+          return res.status(403).json({ error: 'Only admin can save global training' });
+        }
+        bucket[key].globalTraining = { topic, context, updatedAt: new Date().toISOString() };
+        writeAssistantTraining(bucket);
+        return res.json({ scope: 'GLOBAL', training: bucket[key].globalTraining });
+      }
+      bucket[key].userTraining = bucket[key].userTraining || {};
+      bucket[key].userTraining[String(actor.id)] = { topic, context, updatedAt: new Date().toISOString() };
       writeAssistantTraining(bucket);
-      return res.json(bucket[key]);
+      return res.json({ scope: 'USER', training: bucket[key].userTraining[String(actor.id)] });
     } catch (error) {
       console.error(error);
       return res.status(500).json({ error: 'Failed to save assistant training' });
@@ -2915,9 +3396,14 @@ async function startServer() {
       }
 
       const bucket = readAssistantTraining();
-      const savedTraining = bucket[String(actor.tenantId)] || {};
-      const trainingTopic = normalizeNullableString(req.body?.trainingTopic, 120) || savedTraining.topic || '';
-      const trainingContext = normalizeNullableString(req.body?.trainingContext, 2000) || savedTraining.context || '';
+      const tenantBucket = bucket[String(actor.tenantId)] || {};
+      const globalTraining = tenantBucket.globalTraining || {
+        topic: tenantBucket.topic || '',
+        context: tenantBucket.context || '',
+      };
+      const userTraining = (tenantBucket.userTraining || {})[String(actor.id)] || {};
+      const trainingTopic = normalizeNullableString(req.body?.trainingTopic, 120) || userTraining.topic || globalTraining.topic || '';
+      const trainingContext = normalizeNullableString(req.body?.trainingContext, 2000) || userTraining.context || globalTraining.context || '';
       const followUpQuestions = buildFollowUpQuestions({ occupation, age, education, goals });
       const queryParts = [trainingTopic, occupation, education, goals].filter(Boolean);
       const webInsights = searchWeb && queryParts.length

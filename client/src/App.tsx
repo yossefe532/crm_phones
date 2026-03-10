@@ -11,6 +11,7 @@ import Templates from './pages/admin/Templates';
 import Employees from './pages/admin/Employees';
 import PooledNumbers from './pages/admin/PooledNumbers';
 import TeamManagement from './pages/admin/TeamManagement';
+import EmployeePerformance from './pages/admin/EmployeePerformance';
 import PrivateRoute from './components/PrivateRoute';
 import AdminRoute from './components/AdminRoute';
 import SuperAdminRoute from './components/SuperAdminRoute';
@@ -30,14 +31,15 @@ function App() {
             <Route path="leads/no-answer" element={<NoAnswerLeads />} />
             <Route path="leads/recontact" element={<RecontactLeads />} />
             <Route path="leads/new" element={<AddLead />} />
+            <Route path="templates" element={<Templates />} />
             
             {/* Admin Only Routes */}
             <Route path="admin" element={<AdminRoute />}>
               <Route path="employees" element={<Employees />} />
+              <Route path="employees/:id" element={<EmployeePerformance />} />
               <Route path="teams" element={<TeamManagement />} />
               <Route element={<SuperAdminRoute />}>
                 <Route path="upload" element={<UploadLeads />} />
-                <Route path="templates" element={<Templates />} />
                 <Route path="pooled-numbers" element={<PooledNumbers />} />
               </Route>
             </Route>

@@ -4,6 +4,15 @@ export interface AssistantTrainingPayload {
   topic: string;
   context: string;
   updatedAt?: string | null;
+  scope?: 'USER' | 'GLOBAL';
+}
+
+export interface AssistantTrainingResponse {
+  globalTraining?: AssistantTrainingPayload;
+  userTraining?: AssistantTrainingPayload;
+  effectiveTraining?: { topic: string; context: string };
+  scope?: 'USER' | 'GLOBAL';
+  training?: AssistantTrainingPayload;
 }
 
 export interface GenerateScriptPayload {
@@ -28,11 +37,11 @@ export interface GenerateScriptResponse {
 
 export const assistantService = {
   async getTraining() {
-    const response = await api.get<AssistantTrainingPayload>('/assistant/training');
+    const response = await api.get<AssistantTrainingResponse>('/assistant/training');
     return response.data;
   },
   async saveTraining(payload: AssistantTrainingPayload) {
-    const response = await api.post<AssistantTrainingPayload>('/assistant/training', payload);
+    const response = await api.post<AssistantTrainingResponse>('/assistant/training', payload);
     return response.data;
   },
   async extractName(transcript: string) {

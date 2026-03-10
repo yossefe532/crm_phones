@@ -69,6 +69,7 @@ export default function UploadLeads() {
 
       let totalInserted = 0;
       let totalSkippedExisting = 0;
+      let totalUpgradedNames = 0;
       let totalDuplicatesInPayload = 0;
       let validRows = 0;
       let resolvedBatchId: number | null = null;
@@ -85,6 +86,7 @@ export default function UploadLeads() {
         });
         totalInserted += Number(uploadResponse.data?.inserted || 0);
         totalSkippedExisting += Number(uploadResponse.data?.skippedExisting || 0);
+        totalUpgradedNames += Number(uploadResponse.data?.upgradedNames || 0);
         totalDuplicatesInPayload += Number(uploadResponse.data?.duplicatesInPayload || 0);
         validRows += Number(uploadResponse.data?.validRows || 0);
         if (!resolvedBatchId && uploadResponse.data?.batch?.id) {
@@ -92,7 +94,7 @@ export default function UploadLeads() {
           resolvedBatchName = uploadResponse.data?.batch?.name || '';
         }
       }
-      setSuccess(`تمت المعالجة بنجاح • أضيف: ${totalInserted} • موجود مسبقاً: ${totalSkippedExisting} • مكرر داخل الملف: ${totalDuplicatesInPayload} • صالح: ${validRows}${resolvedBatchName ? ` • الحزمة: ${resolvedBatchName}` : ''}`);
+      setSuccess(`تمت المعالجة بنجاح • أضيف: ${totalInserted} • موجود مسبقاً: ${totalSkippedExisting} • تم تحديث أسماء: ${totalUpgradedNames} • مكرر داخل الملف: ${totalDuplicatesInPayload} • صالح: ${validRows}${resolvedBatchName ? ` • الحزمة: ${resolvedBatchName}` : ''}`);
       setTextInput('');
       setBatchName('');
       setBatchLocation('');

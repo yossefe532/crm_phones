@@ -1,4 +1,4 @@
-FROM node:20-bullseye-slim AS client-build
+FROM node:20-bookworm-slim AS client-build
 
 WORKDIR /client
 COPY client/package*.json ./
@@ -6,7 +6,7 @@ RUN npm ci
 COPY client/ ./
 RUN npm run build
 
-FROM node:20-bullseye-slim
+FROM node:20-bookworm-slim
 
 WORKDIR /app/server
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
@@ -17,7 +17,7 @@ COPY --from=client-build /client/dist ./public
 
 ENV NODE_ENV=production
 ENV PORT=10000
-ENV DATABASE_URL=file:/var/data/dev.db
+ENV DATABASE_URL=file:/data/crm.db
 
 EXPOSE 10000
 

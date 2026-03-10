@@ -31,6 +31,12 @@ interface BatchStatRow {
     hiddenUnclaimed: number;
     pulledCount: number;
     contactedCount: number;
+    agreedCount: number;
+    hesitantCount: number;
+    rejectedCount: number;
+    noAnswerCount: number;
+    recontactCount: number;
+    wrongNumberCount: number;
     contactedBy: { userId: number | null; name: string; interactions: number }[];
   };
 }
@@ -202,6 +208,22 @@ export default function PooledNumbers() {
     }
   };
 
+  const exportBatchActive = async (batchIdToExport: number) => {
+    try {
+      const response = await api.get(`/admin/pool-batches/${batchIdToExport}/export-active-leads`, { responseType: 'blob' });
+      const blobUrl = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `batch-${batchIdToExport}-active-leads.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'تعذر تصدير العملاء النشطين');
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -318,6 +340,9 @@ export default function PooledNumbers() {
                 بأسماء: {batch.stats.namedCount} • بدون أسماء: {batch.stats.unnamedCount} • متاح الآن: {batch.stats.inPoolVisible} • مخفي: {batch.stats.hiddenUnclaimed}
               </div>
               <div className="text-xs text-slate-600">
+                موافق: {batch.stats.agreedCount} • متردد: {batch.stats.hesitantCount} • مرفوض: {batch.stats.rejectedCount} • مردش: {batch.stats.noAnswerCount} • إعادة: {batch.stats.recontactCount} • رقم خاطئ: {batch.stats.wrongNumberCount}
+              </div>
+              <div className="text-xs text-slate-600">
                 آخر تواصل بواسطة: {batch.stats.contactedBy.slice(0, 3).map((row) => `${row.name} (${row.interactions})`).join('، ') || 'لا يوجد'}
               </div>
               <div className="flex flex-wrap gap-2">
@@ -329,6 +354,9 @@ export default function PooledNumbers() {
                 </button>
                 <button className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-100 text-emerald-700" disabled={batchLoadingId === batch.id} onClick={() => void actOnBatch(batch, 'unhide')}>
                   إعادة الداتا
+                </button>
+                <button className="px-3 py-2 rounded-lg text-xs font-bold bg-blue-100 text-blue-700" onClick={() => void exportBatchActive(batch.id)}>
+                  تصدير النشطين
                 </button>
               </div>
             </div>

@@ -10,6 +10,17 @@ const __dirname = dirname(__filename);
 const serverRoot = dirname(__dirname);
 const migrationsDir = join(serverRoot, 'prisma', 'migrations');
 const tenantMigrationFile = join(migrationsDir, '20260305205931_tenant_isolation', 'migration.sql');
+const defaultDatabaseUrl = process.env.RAILWAY_ENVIRONMENT
+  ? 'file:/data/crm.db'
+  : 'file:./prisma/dev.db';
+
+if (!process.env.DATABASE_URL) {
+  process.env.DATABASE_URL = defaultDatabaseUrl;
+  console.warn(`[startup] DATABASE_URL was missing. Fallback applied: ${process.env.DATABASE_URL}`);
+}
+if (typeof process.env.DATABASE_URL === 'string' && process.env.DATABASE_URL.startsWith('file:') && !process.env.DATABASE_URL.includes('connection_limit=')) {
+  process.env.DATABASE_URL = `${process.env.DATABASE_URL}${process.env.DATABASE_URL.includes('?') ? '&' : '?'}connection_limit=1`;
+}
 
 const run = (command, args, options = {}) => {
   const result = spawnSync(command, args, {
@@ -30,7 +41,7 @@ const resolveSqlitePath = () => {
   if (!dbUrl.startsWith('file:')) {
     throw new Error(`Unsupported DATABASE_URL for auto-baseline: ${dbUrl}`);
   }
-  const raw = dbUrl.slice('file:'.length);
+  const raw = dbUrl.slice('file:'.length).split('?')[0].split('#')[0];
   if (raw.startsWith('/')) return raw;
   return join(serverRoot, raw.replace(/^\.\//, ''));
 };

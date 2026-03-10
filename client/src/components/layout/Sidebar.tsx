@@ -33,6 +33,7 @@ export default function Sidebar() {
     { to: '/leads/no-answer', icon: PhoneMissed, label: 'عملاء مردوش' },
     { to: '/leads/recontact', icon: PhoneCall, label: 'إعادة التواصل' },
     { to: '/leads/new', icon: UserPlus, label: 'إضافة عميل جديد' },
+    { to: '/templates', icon: MessageSquare, label: 'قوالب الرسائل' },
   ];
 
   const adminItems = [
@@ -40,7 +41,6 @@ export default function Sidebar() {
     { to: '/admin/employees', icon: UsersRound, label: 'إدارة الموظفين' },
     { to: '/admin/upload', icon: Upload, label: 'رفع داتا أرقام' },
     { to: '/admin/pooled-numbers', icon: Database, label: 'الأرقام المجمعة' },
-    { to: '/admin/templates', icon: MessageSquare, label: 'قوالب الرسائل' },
   ];
   const visibleAdminItems = user?.role === 'TEAM_LEAD'
     ? adminItems.filter((item) => item.to === '/admin/employees' || item.to === '/admin/teams')

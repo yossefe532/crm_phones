@@ -173,36 +173,34 @@ export default function Employees() {
 
     setCreating(true);
     try {
-      let effectiveTeamId: number | '' = createForm.teamId;
-
       if (user?.role === 'ADMIN' && createForm.role === 'TEAM_LEAD') {
-        const teamResponse = await api.post('/teams', { name: createForm.teamName.trim() });
-        const createdTeamId = teamResponse?.data?.id;
-        if (!createdTeamId) {
-          throw new Error('فشل إنشاء الفريق الجديد');
-        }
-        effectiveTeamId = createdTeamId;
+        await api.post('/admin/create-team-lead', {
+          teamName: createForm.teamName.trim(),
+          name: createForm.name.trim(),
+          email: createForm.email.trim().toLowerCase(),
+          password: createForm.password,
+        });
+      } else {
+        await api.post('/users', {
+          name: createForm.name.trim(),
+          email: createForm.email.trim().toLowerCase(),
+          password: createForm.password,
+          role: createForm.role,
+          teamId: user?.role === 'ADMIN' ? createForm.teamId : undefined,
+          ...(createForm.role === 'SALES'
+            ? {
+                employeeProfile: {
+                  dailyCallTarget: createForm.dailyCallTarget,
+                  department: createForm.department.trim() || 'Sales',
+                  jobTitle: createForm.jobTitle.trim() || null,
+                  phone: createForm.phone.trim() || null,
+                  timezone: 'Africa/Cairo',
+                  isActive: true,
+                },
+              }
+            : {}),
+        });
       }
-
-      await api.post('/users', {
-        name: createForm.name.trim(),
-        email: createForm.email.trim().toLowerCase(),
-        password: createForm.password,
-        role: createForm.role,
-        teamId: user?.role === 'ADMIN' ? effectiveTeamId : undefined,
-        ...(createForm.role === 'SALES'
-          ? {
-              employeeProfile: {
-                dailyCallTarget: createForm.dailyCallTarget,
-                department: createForm.department.trim() || 'Sales',
-                jobTitle: createForm.jobTitle.trim() || null,
-                phone: createForm.phone.trim() || null,
-                timezone: 'Africa/Cairo',
-                isActive: true,
-              },
-            }
-          : {}),
-      });
       setSuccess(createForm.role === 'TEAM_LEAD' ? 'تم إنشاء Team Lead مع فريق جديد بنجاح' : 'تم إنشاء الموظف بنجاح');
       setCreateForm(defaultCreateForm);
       await fetchTeams();
