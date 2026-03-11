@@ -3072,6 +3072,62 @@ async function startServer() {
     }
   });
 
+  // PUT /api/me/update-name
+  app.put('/api/me/update-name', authenticateToken, async (req, res) => {
+    const { name } = req.body;
+    if (!name || typeof name !== 'string' || name.trim().length < 2) {
+      return res.status(400).json({ error: 'الاسم يجب أن يكون حرفين على الأقل' });
+    }
+
+    try {
+      const updatedUser = await prisma.user.update({
+        where: { id: req.user.id },
+        data: { name: name.trim() },
+        select: { id: true, name: true, email: true, role: true }
+      });
+      res.json(updatedUser);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'فشل تحديث الاسم' });
+    }
+  });
+
+  // PUT /api/admin/teams/:id/update-target (Admin + Team Lead)
+  app.put('/api/admin/teams/:id/update-target', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const teamId = parseInteger(req.params.id);
+    const { target } = req.body;
+
+    if (teamId === null || !Number.isInteger(target) || target < 1) {
+      return res.status(400).json({ error: 'Invalid team id or target value' });
+    }
+
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (actor.role === 'TEAM_LEAD' && actor.teamId !== teamId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      // Update target for all sales members in this team
+      const salesUsers = await prisma.user.findMany({
+        where: { teamId, role: 'SALES', tenantId: actor.tenantId },
+        select: { id: true }
+      });
+
+      const userIds = salesUsers.map(u => u.id);
+      if (userIds.length > 0) {
+        await prisma.employeeProfile.updateMany({
+          where: { userId: { in: userIds } },
+          data: { dailyCallTarget: target }
+        });
+      }
+
+      res.json({ message: `تم تحديث التارجت لـ ${userIds.length} موظف بنجاح` });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to update team target' });
+    }
+  });
+
   // GET /api/users (Admin + Team Lead with scope)
   app.get('/api/users', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
     try {

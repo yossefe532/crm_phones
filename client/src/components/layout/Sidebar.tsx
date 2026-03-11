@@ -1,4 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 import { 
   LayoutDashboard, 
   Users, 
@@ -11,20 +12,53 @@ import {
   X,
   LogOut,
   Upload,
-  Database
+  Database,
+  PencilLine,
+  Check,
+  Loader2
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from '../../store/useStore';
 import { useAuth } from '../../store/useAuth';
+import api from '../../services/api';
 
 export default function Sidebar() {
   const { isSidebarOpen, closeSidebar } = useStore();
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [newName, setNewName] = useState(user?.name || '');
+  const [isSavingName, setIsSavingName] = useState(false);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
+  };
+
+  const handleUpdateName = async () => {
+    if (!newName.trim() || newName.trim() === user?.name) {
+      setIsEditingName(false);
+      return;
+    }
+    setIsSavingName(true);
+    try {
+      await api.put('/api/me/update-name', { name: newName.trim() });
+      // We need to update the user in the auth store too. 
+      // The useAuth store in our project seems to use localStorage.
+      const token = localStorage.getItem('token');
+      if (token && user) {
+        // Since useAuth doesn't have an updateMe action, we might need to trigger a re-check or just update state if possible.
+        // For now, let's assume the user will refresh or we can try to update the store if we had access to the set method.
+        // A better way is to add an updateName action to useAuth store.
+        window.location.reload(); // Simple way to sync for now
+      }
+      setIsEditingName(false);
+    } catch (error) {
+      console.error('Failed to update name:', error);
+      alert('فشل تحديث الاسم');
+    } finally {
+      setIsSavingName(false);
+    }
   };
 
   const navItems = [
@@ -121,13 +155,45 @@ export default function Sidebar() {
         </nav>
 
         <div className="p-4 border-t border-white/10 mt-auto">
-          <div className="flex items-center gap-3 p-3 rounded-xl bg-white/5 mb-3">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center font-bold text-lg">
-              {user?.name?.[0] || 'U'}
-            </div>
-            <div className="overflow-hidden">
-              <p className="text-sm font-bold truncate">{user?.name || 'مستخدم'}</p>
-              <p className="text-xs text-slate-400 truncate">{user?.email}</p>
+          <div className="p-3 rounded-xl bg-white/5 mb-3">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center font-bold text-lg flex-shrink-0">
+                {user?.name?.[0] || 'U'}
+              </div>
+              <div className="overflow-hidden flex-1">
+                {isEditingName ? (
+                  <div className="flex items-center gap-1">
+                    <input 
+                      autoFocus
+                      className="bg-slate-700 text-white text-xs px-2 py-1 rounded border border-emerald-500 w-full outline-none"
+                      value={newName}
+                      onChange={(e) => setNewName(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleUpdateName()}
+                    />
+                    <button 
+                      onClick={handleUpdateName}
+                      disabled={isSavingName}
+                      className="text-emerald-400 hover:text-emerald-300 disabled:opacity-50"
+                    >
+                      {isSavingName ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                    </button>
+                    <button onClick={() => setIsEditingName(false)} className="text-red-400 hover:text-red-300">
+                      <X size={14} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-1 group/name">
+                    <p className="text-sm font-bold truncate">{user?.name || 'مستخدم'}</p>
+                    <button 
+                      onClick={() => { setNewName(user?.name || ''); setIsEditingName(true); }}
+                      className="text-slate-500 hover:text-emerald-400 opacity-0 group-hover/name:opacity-100 transition-opacity"
+                    >
+                      <PencilLine size={12} />
+                    </button>
+                  </div>
+                )}
+                <p className="text-xs text-slate-400 truncate">{user?.email}</p>
+              </div>
             </div>
           </div>
           

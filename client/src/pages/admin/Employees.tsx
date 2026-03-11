@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { AlertCircle, CheckCircle2, Loader2, PencilLine, Save, Trash2, UserPlus, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Loader2, PencilLine, Save, Trash2, UserPlus, X, TrendingUp } from 'lucide-react';
 import api from '../../services/api';
 import { useAuth } from '../../store/useAuth';
 
@@ -79,6 +79,8 @@ export default function Employees() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [bulkTarget, setBulkTarget] = useState<number | ''>('');
+  const [isUpdatingBulk, setIsUpdatingBulk] = useState(false);
   const [createForm, setCreateForm] = useState<CreateAgentForm>(defaultCreateForm);
   const [editForm, setEditForm] = useState<EditProfileForm>({
     name: '',
@@ -296,6 +298,46 @@ export default function Employees() {
     }
   };
 
+  const handleBulkTargetUpdate = async () => {
+    if (!bulkTarget || bulkTarget < 1) {
+      setError('يرجى إدخال تارجت صحيح');
+      return;
+    }
+    
+    // For Team Lead, we use their teamId. For Admin, we might need to know which team or all.
+    // Based on requirements, "التيم ليدر يقدر يغيير التارجت بتاع الجميع بزرار واحد لكل فريقه".
+    const teamIdToUpdate = user?.role === 'TEAM_LEAD' ? user.teamId : null;
+    
+    if (!teamIdToUpdate && user?.role !== 'ADMIN') {
+      setError('لا يوجد فريق محدد لتحديث التارجت');
+      return;
+    }
+
+    if (user?.role === 'ADMIN' && !search.trim()) {
+      // For admin, let's restrict to filtered employees or ask for team
+      // But the requirement says "بزرار واحد لكل فريقه" which implies team scope.
+      // If admin wants to do it, they should probably use the individual edit or we can implement team selection.
+      // For now, let's support Team Lead primary requirement.
+    }
+
+    setIsUpdatingBulk(true);
+    resetAlerts();
+    try {
+      if (user?.role === 'TEAM_LEAD' && user.teamId) {
+        await api.put(`/api/admin/teams/${user.teamId}/update-target`, { target: Number(bulkTarget) });
+        setSuccess(`تم تحديث التارجت لجميع أعضاء الفريق إلى ${bulkTarget}`);
+        fetchEmployees(search);
+        setBulkTarget('');
+      } else {
+        setError('هذه الخاصية متاحة حالياً لمتلقي الفريق (Team Lead)');
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'فشل تحديث التارجت الجماعي');
+    } finally {
+      setIsUpdatingBulk(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -396,19 +438,42 @@ export default function Employees() {
       </form>
 
       <div className="glass-card p-6 space-y-4">
-        <div className="flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
+        <div className="flex flex-col md:flex-row gap-4 md:items-center md:justify-between">
           <h3 className="text-xl font-bold text-slate-800">قائمة الوكلاء</h3>
-          <div className="flex gap-2">
-            <input className="input-field min-w-[260px]" placeholder="بحث بالاسم أو البريد" value={search} onChange={(e) => setSearch(e.target.value)} />
-            <button
-              className="btn-secondary"
-              onClick={async () => {
-                resetAlerts();
-                await fetchEmployees(search);
-              }}
-            >
-              بحث
-            </button>
+          
+          <div className="flex flex-col md:flex-row gap-3">
+            {user?.role === 'TEAM_LEAD' && (
+              <div className="flex items-center gap-2 p-1.5 bg-indigo-50 rounded-xl border border-indigo-100">
+                <input 
+                  type="number" 
+                  className="input-field w-20 h-9 text-center text-sm" 
+                  placeholder="التارجت" 
+                  value={bulkTarget} 
+                  onChange={(e) => setBulkTarget(e.target.value === '' ? '' : Number(e.target.value))} 
+                />
+                <button 
+                  onClick={handleBulkTargetUpdate}
+                  disabled={isUpdatingBulk}
+                  className="btn-primary h-9 px-3 text-xs flex items-center gap-1 whitespace-nowrap"
+                >
+                  {isUpdatingBulk ? <Loader2 size={12} className="animate-spin" /> : <TrendingUp size={12} />}
+                  تحديث تارجت الفريق
+                </button>
+              </div>
+            )}
+            
+            <div className="flex gap-2">
+              <input className="input-field min-w-[200px]" placeholder="بحث بالاسم أو البريد" value={search} onChange={(e) => setSearch(e.target.value)} />
+              <button
+                className="btn-secondary"
+                onClick={async () => {
+                  resetAlerts();
+                  await fetchEmployees(search);
+                }}
+              >
+                بحث
+              </button>
+            </div>
           </div>
         </div>
 
