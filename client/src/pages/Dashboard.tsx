@@ -41,6 +41,18 @@ interface Stats {
     callsToday: number;
     agreedToday: number;
   }>;
+  leaderboard?: Array<{
+    userId: number;
+    name: string;
+    callsToday: number;
+    agreedToday: number;
+    dailyCallTarget: number;
+  }>;
+}
+
+interface Team {
+  id: number;
+  name: string;
 }
 
 export default function Dashboard() {
@@ -48,15 +60,28 @@ export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [stats, setStats] = useState<Stats>({ total: 0, agreed: 0, hesitant: 0, rejected: 0, poolCount: 0 });
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = useState<number | ''>('');
   const [loading, setLoading] = useState(true);
   const [claiming, setClaiming] = useState(false);
   const isFetchingRef = useRef(false);
+
+  const fetchTeams = async () => {
+    if (user?.role !== 'ADMIN') return;
+    try {
+      const response = await api.get('/teams');
+      setTeams(response.data || []);
+    } catch (error) {
+      console.error('Failed to fetch teams:', error);
+    }
+  };
 
   const fetchStats = async () => {
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
     try {
-      const response = await api.get('/stats');
+      const params = selectedTeamId ? { teamId: selectedTeamId } : {};
+      const response = await api.get('/stats', { params });
       setStats(response.data);
     } catch (error) {
       console.error('Failed to fetch stats:', error);
@@ -67,6 +92,10 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
+    fetchTeams();
+  }, [user?.role]);
+
+  useEffect(() => {
     void fetchStats();
     const intervalId = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
@@ -74,7 +103,7 @@ export default function Dashboard() {
       }
     }, REFRESH_INTERVAL_MS);
     return () => window.clearInterval(intervalId);
-  }, []);
+  }, [selectedTeamId]);
 
   const claimLead = async () => {
     setClaiming(true);
@@ -115,12 +144,33 @@ export default function Dashboard() {
     { name: 'إعادة تواصل', value: stats.recontact || 0, color: '#6366f1' },
   ];
 
+  const userRank = stats.leaderboard?.findIndex(l => l.userId === user?.id) ?? -1;
+  const isTopThree = userRank >= 0 && userRank < 3;
+  const displayLeaderboard = stats.leaderboard?.slice(0, 3) || [];
+  const userStats = userRank >= 3 ? stats.leaderboard?.[userRank] : null;
+
   return (
     <div className="space-y-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h2 className="text-3xl font-bold text-slate-800 mb-2">لوحة التحكم</h2>
-          <p className="text-slate-600">أهلاً بك، {user?.name}</p>
+        <div className="flex items-center gap-4">
+          <div>
+            <h2 className="text-3xl font-bold text-slate-800 mb-2">لوحة التحكم</h2>
+            <p className="text-slate-600">أهلاً بك، {user?.name}</p>
+          </div>
+          {user?.role === 'ADMIN' && (
+            <select
+              value={selectedTeamId}
+              onChange={(e) => setSelectedTeamId(e.target.value ? Number(e.target.value) : '')}
+              className="input-field min-w-[200px] h-10 mt-2"
+            >
+              <option value="">كل الفرق</option>
+              {teams.map((team) => (
+                <option key={team.id} value={team.id}>
+                  فريق: {team.name}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
         
         {user?.role !== 'ADMIN' ? (
@@ -204,7 +254,8 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="glass-card p-6">
+      <div className="grid md:grid-cols-3 gap-6">
+        <div className="md:col-span-2 glass-card p-6">
           <h3 className="text-xl font-bold text-slate-800 mb-6">أداء الفريق</h3>
           {stats.teamMembersPerformance && stats.teamMembersPerformance.length > 0 ? (
             <div className="overflow-x-auto">
@@ -296,6 +347,66 @@ export default function Dashboard() {
             </div>
           )}
         </div>
+
+        <div className="glass-card p-6 flex flex-col h-full">
+          <h3 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
+            <span>🏆 وحوش السالز</span>
+          </h3>
+          <div className="space-y-4 flex-1">
+            {displayLeaderboard.map((member, idx) => (
+              <div 
+                key={member.userId} 
+                className={clsx(
+                  "p-4 rounded-2xl flex items-center gap-4 border transition-all duration-300",
+                  idx === 0 ? "bg-amber-50 border-amber-200 scale-105 shadow-sm" : 
+                  idx === 1 ? "bg-slate-50 border-slate-200" : 
+                  "bg-orange-50/50 border-orange-100"
+                )}
+              >
+                <div className={clsx(
+                  "w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg",
+                  idx === 0 ? "bg-amber-400 text-white" : 
+                  idx === 1 ? "bg-slate-300 text-slate-700" : 
+                  "bg-orange-300 text-white"
+                )}>
+                  {idx + 1}
+                </div>
+                <div className="flex-1">
+                  <p className="font-bold text-slate-800">{member.name}</p>
+                  <p className="text-xs text-slate-500">{member.callsToday} مكالمة | {member.agreedToday} موافق</p>
+                </div>
+              </div>
+            ))}
+
+            {userStats && (
+              <>
+                <div className="border-t border-dashed border-slate-200 my-6"></div>
+                <div className="p-4 rounded-2xl bg-indigo-50 border border-indigo-100 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold">
+                      {userRank + 1}
+                    </div>
+                    <div className="flex-1">
+                      <p className="font-bold text-indigo-900">ترتيبك الحالي</p>
+                      <p className="text-xs text-indigo-700">أنت في المركز الـ {userRank + 1}</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 p-3 bg-white/50 rounded-xl text-sm text-indigo-800 italic text-center">
+                    {userRank < 10 ? "قربت جداً من الوحوش! شد حيلك وادخل في التوب 3 🚀" : "البداية صعبة بس أنت قدها، ركز وهتوصل للقمة! 💪"}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {isTopThree && (
+              <div className="mt-6 p-4 rounded-2xl bg-emerald-50 border border-emerald-100 text-center animate-bounce">
+                <p className="text-emerald-800 font-bold">أنت من وحوش اليوم! 👑</p>
+                <p className="text-xs text-emerald-600 mt-1">حافظ على مكانك في القمة</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
       </div>
     </div>
   );

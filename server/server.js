@@ -2798,12 +2798,19 @@ async function startServer() {
         return res.status(400).json({ error: actorTenantError });
       }
 
+      const teamIdFilter = req.query.teamId ? parseInt(req.query.teamId) : null;
+
       const where = { tenantId: actor.tenantId };
-      if (actor.role === 'TEAM_LEAD') {
+      if (actor.role === 'ADMIN') {
+        if (teamIdFilter) {
+          where.teamId = teamIdFilter;
+        }
+      } else if (actor.role === 'TEAM_LEAD') {
         if (!actor.teamId) return res.status(400).json({ error: 'User is not assigned to a team' });
         where.teamId = actor.teamId;
       } else if (actor.role === 'SALES') {
         if (!actor.teamId) return res.status(400).json({ error: 'User is not assigned to a team' });
+        // Global where for sales dashboard stays the same
         where.OR = [
           { agentId: req.user.id },
           {
@@ -2836,10 +2843,11 @@ async function startServer() {
       let callsYesterday = 0;
       let dailyCallTarget = null;
       let teamMembersPerformance = [];
-      if (actor.role === 'ADMIN') {
-        poolCount = await prisma.lead.count({ where: buildPoolWhere({ tenantId: actor.tenantId }) });
-        
-        const allSales = await prisma.user.findMany({
+      let leaderboard = [];
+
+      if (actor.role === 'ADMIN' || actor.role === 'TEAM_LEAD' || actor.role === 'SALES') {
+        // Calculate leaderboard for everyone in the same tenant
+        const allTenantSales = await prisma.user.findMany({
           where: { role: 'SALES', tenantId: actor.tenantId },
           select: {
             id: true,
@@ -2847,22 +2855,22 @@ async function startServer() {
             employeeProfile: { select: { dailyCallTarget: true } },
           },
         });
-        const salesIds = allSales.map(m => m.id);
-        
-        const callsTodayByAgent = salesIds.length ? await prisma.interaction.groupBy({
+        const tenantSalesIds = allTenantSales.map(m => m.id);
+
+        const tenantCallsTodayByAgent = tenantSalesIds.length ? await prisma.interaction.groupBy({
           by: ['userId'],
           where: {
-            userId: { in: salesIds },
+            userId: { in: tenantSalesIds },
             type: { in: ['CALL', 'SEND'] },
             date: { gte: start, lt: end },
           },
           _count: { _all: true },
         }) : [];
 
-        const agreedTodayByAgent = salesIds.length ? await prisma.interaction.groupBy({
+        const tenantAgreedTodayByAgent = tenantSalesIds.length ? await prisma.interaction.groupBy({
           by: ['userId'],
           where: {
-            userId: { in: salesIds },
+            userId: { in: tenantSalesIds },
             type: { in: ['CALL', 'SEND'] },
             outcome: 'AGREED',
             date: { gte: start, lt: end },
@@ -2870,23 +2878,64 @@ async function startServer() {
           _count: { _all: true },
         }) : [];
 
-        const callsMap = callsTodayByAgent.reduce((acc, row) => {
+        const tCallsMap = tenantCallsTodayByAgent.reduce((acc, row) => {
           acc[row.userId] = row._count._all;
           return acc;
         }, {});
 
-        const agreedMap = agreedTodayByAgent.reduce((acc, row) => {
+        const tAgreedMap = tenantAgreedTodayByAgent.reduce((acc, row) => {
           acc[row.userId] = row._count._all;
           return acc;
         }, {});
 
-        teamMembersPerformance = allSales.map((m) => ({
+        leaderboard = allTenantSales.map(m => ({
           userId: m.id,
           name: m.name,
+          callsToday: tCallsMap[m.id] || 0,
+          agreedToday: tAgreedMap[m.id] || 0,
           dailyCallTarget: m.employeeProfile?.dailyCallTarget || 30,
-          callsToday: callsMap[m.id] || 0,
-          agreedToday: agreedMap[m.id] || 0,
-        }));
+        })).sort((a, b) => {
+          // Priority 1: Calls Today (Descending)
+          if (b.callsToday !== a.callsToday) return b.callsToday - a.callsToday;
+          // Priority 2: Agreed Today (Descending)
+          return b.agreedToday - a.agreedToday;
+        });
+      }
+
+      if (actor.role === 'ADMIN') {
+        poolCount = await prisma.lead.count({ where: buildPoolWhere({ tenantId: actor.tenantId, teamId: teamIdFilter }) });
+        
+        const filteredSales = await prisma.user.findMany({
+          where: { 
+            role: 'SALES', 
+            tenantId: actor.tenantId,
+            ...(teamIdFilter ? { teamId: teamIdFilter } : {})
+          },
+          select: {
+            id: true,
+            name: true,
+            employeeProfile: { select: { dailyCallTarget: true } },
+          },
+        });
+        const fSalesIds = filteredSales.map(m => m.id);
+        
+        teamMembersPerformance = filteredSales.map((m) => {
+          const stats = leaderboard.find(l => l.userId === m.id);
+          return {
+            userId: m.id,
+            name: m.name,
+            dailyCallTarget: m.employeeProfile?.dailyCallTarget || 30,
+            callsToday: stats?.callsToday || 0,
+            agreedToday: stats?.agreedToday || 0,
+          };
+        }).sort((a, b) => {
+          const aDone = a.callsToday >= a.dailyCallTarget;
+          const bDone = b.callsToday >= b.dailyCallTarget;
+          if (aDone && !bDone) return -1;
+          if (!aDone && bDone) return 1;
+          if (b.callsToday !== a.callsToday) return b.callsToday - a.callsToday;
+          return b.agreedToday - a.agreedToday;
+        });
       } else if (actor.role === 'SALES') {
         const profile = await ensureEmployeeProfile(req.user.id);
         dailyCallTarget = profile.dailyCallTarget;
@@ -2918,44 +2967,23 @@ async function startServer() {
         const salesIds = teamMembers.map((member) => member.id);
         dailyCallTarget = teamMembers.reduce((sum, member) => sum + (member.employeeProfile?.dailyCallTarget || 30), 0);
         
-        const callsTodayByAgent = salesIds.length ? await prisma.interaction.groupBy({
-          by: ['userId'],
-          where: {
-            userId: { in: salesIds },
-            type: { in: ['CALL', 'SEND'] },
-            date: { gte: start, lt: end },
-          },
-          _count: { _all: true },
-        }) : [];
-
-        const agreedTodayByAgent = salesIds.length ? await prisma.interaction.groupBy({
-          by: ['userId'],
-          where: {
-            userId: { in: salesIds },
-            type: { in: ['CALL', 'SEND'] },
-            outcome: 'AGREED',
-            date: { gte: start, lt: end },
-          },
-          _count: { _all: true },
-        }) : [];
-
-        const callsMap = callsTodayByAgent.reduce((acc, row) => {
-          acc[row.userId] = row._count._all;
-          return acc;
-        }, {});
-
-        const agreedMap = agreedTodayByAgent.reduce((acc, row) => {
-          acc[row.userId] = row._count._all;
-          return acc;
-        }, {});
-
-        teamMembersPerformance = teamMembers.map((member) => ({
-          userId: member.id,
-          name: member.name,
-          dailyCallTarget: member.employeeProfile?.dailyCallTarget || 30,
-          callsToday: callsMap[member.id] || 0,
-          agreedToday: agreedMap[member.id] || 0,
-        }));
+        teamMembersPerformance = teamMembers.map((m) => {
+          const stats = leaderboard.find(l => l.userId === m.id);
+          return {
+            userId: m.id,
+            name: m.name,
+            dailyCallTarget: m.employeeProfile?.dailyCallTarget || 30,
+            callsToday: stats?.callsToday || 0,
+            agreedToday: stats?.agreedToday || 0,
+          };
+        }).sort((a, b) => {
+          const aDone = a.callsToday >= a.dailyCallTarget;
+          const bDone = b.callsToday >= b.dailyCallTarget;
+          if (aDone && !bDone) return -1;
+          if (!aDone && bDone) return 1;
+          if (b.callsToday !== a.callsToday) return b.callsToday - a.callsToday;
+          return b.agreedToday - a.agreedToday;
+        });
 
         callsToday = teamMembersPerformance.reduce((sum, m) => sum + m.callsToday, 0);
         
@@ -3022,6 +3050,7 @@ async function startServer() {
           : null,
         scope: actor.role === 'ADMIN' ? 'TENANT' : actor.role === 'TEAM_LEAD' ? 'TEAM' : 'AGENT',
         generatedAt: new Date().toISOString(),
+        leaderboard,
       });
     } catch (error) {
       console.error(error);
