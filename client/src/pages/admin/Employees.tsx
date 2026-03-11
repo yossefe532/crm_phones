@@ -124,7 +124,13 @@ export default function Employees() {
   };
 
   useEffect(() => {
-    fetchEmployees();
+    const timer = setTimeout(() => {
+      fetchEmployees(search);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  useEffect(() => {
     fetchTeams();
   }, []);
 

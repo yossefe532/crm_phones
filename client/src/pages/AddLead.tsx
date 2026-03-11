@@ -195,6 +195,7 @@ export default function AddLead() {
       data.status !== 'NEW' && AUTO_MESSAGE_STATUSES.has(data.status) && !!messageDraft.trim();
     const waWindow = shouldAutoSend ? window.open('about:blank', '_blank') : null;
     try {
+      console.log('Submitting lead data:', { ...data, claimedLeadId, recontactLeadId });
       if (claimedLeadId) {
         await api.post(`/leads/${claimedLeadId}/finalize-claim`, { ...data, source: 'CALL' });
       } else if (recontactLeadId) {

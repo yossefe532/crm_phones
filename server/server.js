@@ -2925,7 +2925,7 @@ async function startServer() {
     const fallbackEmployees = async () => {
       const where = actor.role === 'ADMIN'
         ? { tenantId: actor.tenantId, role: { in: ['SALES', 'TEAM_LEAD'] } }
-        : { tenantId: actor.tenantId, teamId: actor.teamId || -1, role: 'SALES' };
+        : { tenantId: actor.tenantId, teamId: actor.teamId || -1, role: { in: ['SALES', 'TEAM_LEAD'] } };
       const baseUsers = await prisma.user.findMany({
         where,
         orderBy: { name: 'asc' },
@@ -2976,7 +2976,7 @@ async function startServer() {
         let scopedUsers = teams.flatMap((team) => team.users);
         scopedUsers = scopedUsers.filter((user) => (actor.role === 'ADMIN'
           ? user.role === 'SALES' || user.role === 'TEAM_LEAD'
-          : user.role === 'SALES'));
+          : user.role === 'SALES' || user.role === 'TEAM_LEAD'));
         if (normalizedSearch) {
           scopedUsers = scopedUsers.filter((user) => {
             const name = String(user.name || '').toLowerCase();

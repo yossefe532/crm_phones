@@ -65,6 +65,7 @@ export default function Leads() {
   }, []);
 
   const filteredLeads = leads
+    .filter((lead) => lead.source !== 'POOL')
     .filter((lead) =>
       lead.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       lead.phone.includes(searchTerm),
