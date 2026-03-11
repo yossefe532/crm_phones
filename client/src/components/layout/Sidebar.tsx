@@ -42,15 +42,14 @@ export default function Sidebar() {
     }
     setIsSavingName(true);
     try {
-      await api.put('/api/me/update-name', { name: newName.trim() });
-      // We need to update the user in the auth store too. 
-      // The useAuth store in our project seems to use localStorage.
-      const token = localStorage.getItem('token');
-      if (token && user) {
-        // Since useAuth doesn't have an updateMe action, we might need to trigger a re-check or just update state if possible.
-        // For now, let's assume the user will refresh or we can try to update the store if we had access to the set method.
-        // A better way is to add an updateName action to useAuth store.
-        window.location.reload(); // Simple way to sync for now
+      const response = await api.put('/me/update-name', { name: newName.trim() });
+      const { user: updatedUser, token: newToken } = response.data;
+      
+      if (newToken && updatedUser) {
+        localStorage.setItem('token', newToken);
+        // We can't directly update the zustand store easily from here without 
+        // access to the set method, but we can reload to sync everything.
+        window.location.reload(); 
       }
       setIsEditingName(false);
     } catch (error) {

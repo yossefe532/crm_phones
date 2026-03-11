@@ -3083,9 +3083,24 @@ async function startServer() {
       const updatedUser = await prisma.user.update({
         where: { id: req.user.id },
         data: { name: name.trim() },
-        select: { id: true, name: true, email: true, role: true }
+        select: { id: true, name: true, email: true, role: true, tenantId: true, teamId: true }
       });
-      res.json(updatedUser);
+
+      // Issue a new token with the updated name
+      const token = jwt.sign(
+        {
+          id: updatedUser.id,
+          name: updatedUser.name,
+          email: updatedUser.email,
+          role: updatedUser.role,
+          tenantId: updatedUser.tenantId,
+          teamId: updatedUser.teamId,
+        },
+        JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+
+      res.json({ user: updatedUser, token });
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'فشل تحديث الاسم' });
@@ -3107,18 +3122,28 @@ async function startServer() {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      // Update target for all sales members in this team
-      const salesUsers = await prisma.user.findMany({
-        where: { teamId, role: 'SALES', tenantId: actor.tenantId },
+      // Find all users in this team (Sales + Team Leads)
+      const teamUsers = await prisma.user.findMany({
+        where: { teamId, tenantId: actor.tenantId },
         select: { id: true }
       });
 
-      const userIds = salesUsers.map(u => u.id);
+      const userIds = teamUsers.map(u => u.id);
       if (userIds.length > 0) {
-        await prisma.employeeProfile.updateMany({
-          where: { userId: { in: userIds } },
-          data: { dailyCallTarget: target }
-        });
+        // We use a loop to ensure each user has an EmployeeProfile if it doesn't exist
+        for (const userId of userIds) {
+          await prisma.employeeProfile.upsert({
+            where: { userId },
+            update: { dailyCallTarget: target },
+            create: {
+              userId,
+              dailyCallTarget: target,
+              department: 'Sales', // Default
+              isActive: true,
+              timezone: 'Africa/Cairo',
+            }
+          });
+        }
       }
 
       res.json({ message: `تم تحديث التارجت لـ ${userIds.length} موظف بنجاح` });

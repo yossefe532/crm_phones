@@ -324,8 +324,8 @@ export default function Employees() {
     resetAlerts();
     try {
       if (user?.role === 'TEAM_LEAD' && user.teamId) {
-        await api.put(`/api/admin/teams/${user.teamId}/update-target`, { target: Number(bulkTarget) });
-        setSuccess(`تم تحديث التارجت لجميع أعضاء الفريق إلى ${bulkTarget}`);
+        const response = await api.put(`/admin/teams/${user.teamId}/update-target`, { target: Number(bulkTarget) });
+        setSuccess(response.data?.message || `تم تحديث التارجت لجميع أعضاء الفريق إلى ${bulkTarget}`);
         fetchEmployees(search);
         setBulkTarget('');
       } else {
