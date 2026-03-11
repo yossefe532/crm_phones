@@ -3109,28 +3109,38 @@ async function startServer() {
 
   // PUT /api/admin/teams/:id/update-target (Admin + Team Lead)
   app.put('/api/admin/teams/:id/update-target', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
-    const teamId = parseInteger(req.params.id);
+    const teamIdParam = req.params.id;
     const { target } = req.body;
 
-    if (teamId === null || !Number.isInteger(target) || target < 1) {
-      return res.status(400).json({ error: 'Invalid team id or target value' });
+    if (!Number.isInteger(target) || target < 1) {
+      return res.status(400).json({ error: 'Invalid target value' });
     }
 
     try {
       const actor = await getCurrentUserScope(req.user.id);
-      if (actor.role === 'TEAM_LEAD' && actor.teamId !== teamId) {
-        return res.status(403).json({ error: 'Access denied' });
+      
+      let userIds = [];
+      if (teamIdParam === 'all') {
+        if (actor.role !== 'ADMIN') return res.status(403).json({ error: 'Only admin can update all targets' });
+        const allUsers = await prisma.user.findMany({
+          where: { tenantId: actor.tenantId, role: { in: ['SALES', 'TEAM_LEAD'] } },
+          select: { id: true }
+        });
+        userIds = allUsers.map(u => u.id);
+      } else {
+        const teamId = parseInteger(teamIdParam);
+        if (teamId === null) return res.status(400).json({ error: 'Invalid team id' });
+        if (actor.role === 'TEAM_LEAD' && actor.teamId !== teamId) {
+          return res.status(403).json({ error: 'Access denied' });
+        }
+        const teamUsers = await prisma.user.findMany({
+          where: { teamId, tenantId: actor.tenantId },
+          select: { id: true }
+        });
+        userIds = teamUsers.map(u => u.id);
       }
 
-      // Find all users in this team (Sales + Team Leads)
-      const teamUsers = await prisma.user.findMany({
-        where: { teamId, tenantId: actor.tenantId },
-        select: { id: true }
-      });
-
-      const userIds = teamUsers.map(u => u.id);
       if (userIds.length > 0) {
-        // We use a loop to ensure each user has an EmployeeProfile if it doesn't exist
         for (const userId of userIds) {
           await prisma.employeeProfile.upsert({
             where: { userId },
@@ -3138,7 +3148,7 @@ async function startServer() {
             create: {
               userId,
               dailyCallTarget: target,
-              department: 'Sales', // Default
+              department: 'Sales',
               isActive: true,
               timezone: 'Africa/Cairo',
             }
@@ -3150,6 +3160,63 @@ async function startServer() {
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Failed to update team target' });
+    }
+  });
+
+  // PUT /api/admin/employees/:id/profile (Admin + Team Lead)
+  app.put('/api/admin/employees/:id/profile', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const employeeId = parseInteger(req.params.id);
+    if (employeeId === null) return res.status(400).json({ error: 'Invalid employee id' });
+
+    const { name, email, dailyCallTarget, department, jobTitle, phone, isActive, role } = req.body;
+
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      const targetUser = await prisma.user.findUnique({ where: { id: employeeId } });
+      
+      if (!targetUser || targetUser.tenantId !== actor.tenantId) {
+        return res.status(404).json({ error: 'Employee not found' });
+      }
+
+      if (actor.role === 'TEAM_LEAD' && targetUser.teamId !== actor.teamId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      // Update User details (including name)
+      const updatedUser = await prisma.user.update({
+        where: { id: employeeId },
+        data: {
+          ...(name && { name: name.trim() }),
+          ...(email && { email: email.trim().toLowerCase() }),
+          ...(role && actor.role === 'ADMIN' && { role }), // Only admin can change role
+        }
+      });
+
+      // Update or Create Profile
+      const updatedProfile = await prisma.employeeProfile.upsert({
+        where: { userId: employeeId },
+        update: {
+          ...(dailyCallTarget !== undefined && { dailyCallTarget }),
+          ...(department && { department }),
+          ...(jobTitle !== undefined && { jobTitle }),
+          ...(phone !== undefined && { phone }),
+          ...(isActive !== undefined && { isActive }),
+        },
+        create: {
+          userId: employeeId,
+          dailyCallTarget: dailyCallTarget || 30,
+          department: department || 'Sales',
+          jobTitle: jobTitle || null,
+          phone: phone || null,
+          isActive: isActive !== undefined ? isActive : true,
+          timezone: 'Africa/Cairo',
+        }
+      });
+
+      res.json({ user: updatedUser, profile: updatedProfile });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to update employee' });
     }
   });
 

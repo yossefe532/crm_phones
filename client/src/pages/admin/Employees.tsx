@@ -257,11 +257,9 @@ export default function Employees() {
 
     setSaving(true);
     try {
-      await api.put(`/users/${editingId}`, {
+      await api.put(`/admin/employees/${editingId}/profile`, {
         name: editForm.name.trim(),
         email: editForm.email.trim().toLowerCase(),
-      });
-      await api.put(`/admin/employees/${editingId}/profile`, {
         dailyCallTarget: editForm.dailyCallTarget,
         department: editForm.department.trim(),
         jobTitle: editForm.jobTitle.trim() || null,
@@ -328,8 +326,13 @@ export default function Employees() {
         setSuccess(response.data?.message || `تم تحديث التارجت لجميع أعضاء الفريق إلى ${bulkTarget}`);
         fetchEmployees(search);
         setBulkTarget('');
+      } else if (user?.role === 'ADMIN') {
+        const response = await api.put(`/admin/teams/all/update-target`, { target: Number(bulkTarget) });
+        setSuccess(response.data?.message || `تم تحديث التارجت لجميع الموظفين إلى ${bulkTarget}`);
+        fetchEmployees(search);
+        setBulkTarget('');
       } else {
-        setError('هذه الخاصية متاحة حالياً لمتلقي الفريق (Team Lead)');
+        setError('هذه الخاصية متاحة للمديرين ورؤساء الفرق فقط');
       }
     } catch (err: any) {
       setError(err.response?.data?.error || 'فشل تحديث التارجت الجماعي');
@@ -442,7 +445,7 @@ export default function Employees() {
           <h3 className="text-xl font-bold text-slate-800">قائمة الوكلاء</h3>
           
           <div className="flex flex-col md:flex-row gap-3">
-            {user?.role === 'TEAM_LEAD' && (
+            {(user?.role === 'TEAM_LEAD' || user?.role === 'ADMIN') && (
               <div className="flex items-center gap-2 p-1.5 bg-indigo-50 rounded-xl border border-indigo-100">
                 <input 
                   type="number" 
@@ -457,7 +460,7 @@ export default function Employees() {
                   className="btn-primary h-9 px-3 text-xs flex items-center gap-1 whitespace-nowrap"
                 >
                   {isUpdatingBulk ? <Loader2 size={12} className="animate-spin" /> : <TrendingUp size={12} />}
-                  تحديث تارجت الفريق
+                  {user?.role === 'ADMIN' ? 'تحديث الكل' : 'تحديث تارجت الفريق'}
                 </button>
               </div>
             )}
