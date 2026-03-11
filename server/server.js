@@ -2859,7 +2859,23 @@ async function startServer() {
           _count: { _all: true },
         }) : [];
 
+        const agreedTodayByAgent = salesIds.length ? await prisma.interaction.groupBy({
+          by: ['userId'],
+          where: {
+            userId: { in: salesIds },
+            type: { in: ['CALL', 'SEND'] },
+            outcome: 'AGREED',
+            date: { gte: start, lt: end },
+          },
+          _count: { _all: true },
+        }) : [];
+
         const callsMap = callsTodayByAgent.reduce((acc, row) => {
+          acc[row.userId] = row._count._all;
+          return acc;
+        }, {});
+
+        const agreedMap = agreedTodayByAgent.reduce((acc, row) => {
           acc[row.userId] = row._count._all;
           return acc;
         }, {});
@@ -2869,6 +2885,7 @@ async function startServer() {
           name: m.name,
           dailyCallTarget: m.employeeProfile?.dailyCallTarget || 30,
           callsToday: callsMap[m.id] || 0,
+          agreedToday: agreedMap[m.id] || 0,
         }));
       } else if (actor.role === 'SALES') {
         const profile = await ensureEmployeeProfile(req.user.id);
@@ -2911,7 +2928,23 @@ async function startServer() {
           _count: { _all: true },
         }) : [];
 
+        const agreedTodayByAgent = salesIds.length ? await prisma.interaction.groupBy({
+          by: ['userId'],
+          where: {
+            userId: { in: salesIds },
+            type: { in: ['CALL', 'SEND'] },
+            outcome: 'AGREED',
+            date: { gte: start, lt: end },
+          },
+          _count: { _all: true },
+        }) : [];
+
         const callsMap = callsTodayByAgent.reduce((acc, row) => {
+          acc[row.userId] = row._count._all;
+          return acc;
+        }, {});
+
+        const agreedMap = agreedTodayByAgent.reduce((acc, row) => {
           acc[row.userId] = row._count._all;
           return acc;
         }, {});
@@ -2921,6 +2954,7 @@ async function startServer() {
           name: member.name,
           dailyCallTarget: member.employeeProfile?.dailyCallTarget || 30,
           callsToday: callsMap[member.id] || 0,
+          agreedToday: agreedMap[member.id] || 0,
         }));
 
         callsToday = teamMembersPerformance.reduce((sum, m) => sum + m.callsToday, 0);
@@ -2978,6 +3012,7 @@ async function startServer() {
           remainingCalls: safeDailyCallTarget ? Math.max(0, safeDailyCallTarget - safeCallsToday) : null,
           completionRate,
         },
+        teamMembersPerformance: (actor.role === 'ADMIN' || actor.role === 'TEAM_LEAD') ? teamMembersPerformance : [],
         teamAnalytics: actor.role === 'TEAM_LEAD'
           ? {
               teamId: actor.teamId,
