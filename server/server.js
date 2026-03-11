@@ -3242,6 +3242,21 @@ async function startServer() {
     }
   });
 
+  // GET /api/notifications/test
+  app.get('/api/notifications/test', authenticateToken, async (req, res) => {
+    try {
+      await sendPushNotification(req.user.id, {
+        title: 'تجربة الإشعارات 🔔',
+        body: 'مبروك! نظام الإشعارات شغال بنجاح على جهازك.',
+        icon: '/icon-192.png',
+      });
+      res.json({ message: 'تم إرسال إشعار تجريبي بنجاح' });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'فشل إرسال الإشعار التجريبي' });
+    }
+  });
+
   // GET /api/users (Admin + Team Lead with scope)
   app.get('/api/users', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
     try {

@@ -13,7 +13,8 @@ import {
   TrendingUp,
   Filter,
   MessageCircle,
-  PieChart as PieChartIcon
+  PieChart as PieChartIcon,
+  BellRing
 } from 'lucide-react';
 import clsx from 'clsx';
 import api from '../services/api';
@@ -71,6 +72,7 @@ export default function Dashboard() {
   const [selectedTeamId, setSelectedTeamId] = useState<number | ''>('');
   const [loading, setLoading] = useState(true);
   const [claiming, setClaiming] = useState(false);
+  const [testingNotification, setTestingNotification] = useState(false);
   const isFetchingRef = useRef(false);
 
   const fetchTeams = async () => {
@@ -125,6 +127,18 @@ export default function Dashboard() {
       alert(error.response?.data?.error || 'لا توجد عملاء متاحين في المجمع حالياً');
     } finally {
       setClaiming(false);
+    }
+  };
+
+  const testNotification = async () => {
+    setTestingNotification(true);
+    try {
+      await api.get('/notifications/test');
+      alert('سيصلك إشعار تجريبي خلال لحظات.. تأكد من تفعيل الإشعارات في المتصفح');
+    } catch (error: any) {
+      alert(error.response?.data?.error || 'فشل إرسال الإشعار التجريبي. تأكد من اشتراكك في الإشعارات أولاً.');
+    } finally {
+      setTestingNotification(false);
     }
   };
 
@@ -186,7 +200,17 @@ export default function Dashboard() {
           )}
         </div>
         
-        <div className="w-full md:w-auto">
+        <div className="flex flex-col md:flex-row items-center gap-3 w-full md:w-auto">
+          <button
+            onClick={testNotification}
+            disabled={testingNotification}
+            className="btn-secondary w-full md:w-auto flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-slate-200 hover:border-emerald-500 hover:text-emerald-600 transition-all font-bold group"
+            title="تجربة وصول الإشعارات"
+          >
+            <BellRing size={18} className={clsx(testingNotification && "animate-ring")} />
+            <span>تجربة الإشعارات</span>
+          </button>
+
           {user?.role !== 'ADMIN' ? (
             <button
               onClick={claimLead}
