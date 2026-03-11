@@ -2914,7 +2914,7 @@ async function startServer() {
           select: {
             id: true,
             name: true,
-            employeeProfile: { select: { dailyCallTarget: true } },
+            employeeProfile: { select: { dailyCallTarget: true, phone: true } },
           },
         });
         const fSalesIds = filteredSales.map(m => m.id);
@@ -2927,6 +2927,7 @@ async function startServer() {
             dailyCallTarget: m.employeeProfile?.dailyCallTarget || 30,
             callsToday: stats?.callsToday || 0,
             agreedToday: stats?.agreedToday || 0,
+            phone: m.employeeProfile?.phone || null,
           };
         }).sort((a, b) => {
           const aDone = a.callsToday >= a.dailyCallTarget;
@@ -2961,7 +2962,7 @@ async function startServer() {
           select: {
             id: true,
             name: true,
-            employeeProfile: { select: { dailyCallTarget: true } },
+            employeeProfile: { select: { dailyCallTarget: true, phone: true } },
           },
         });
         const salesIds = teamMembers.map((member) => member.id);
@@ -2975,6 +2976,7 @@ async function startServer() {
             dailyCallTarget: m.employeeProfile?.dailyCallTarget || 30,
             callsToday: stats?.callsToday || 0,
             agreedToday: stats?.agreedToday || 0,
+            phone: m.employeeProfile?.phone || null,
           };
         }).sort((a, b) => {
           const aDone = a.callsToday >= a.dailyCallTarget;
@@ -3074,17 +3076,37 @@ async function startServer() {
 
   // PUT /api/me/update-name
   app.put('/api/me/update-name', authenticateToken, async (req, res) => {
-    const { name } = req.body;
-    if (!name || typeof name !== 'string' || name.trim().length < 2) {
-      return res.status(400).json({ error: 'الاسم يجب أن يكون حرفين على الأقل' });
-    }
-
+    const { name, whatsappPhone } = req.body;
+    
     try {
+      const dataToUpdate = {};
+      if (name) {
+        if (typeof name !== 'string' || name.trim().length < 2) {
+          return res.status(400).json({ error: 'الاسم يجب أن يكون حرفين على الأقل' });
+        }
+        dataToUpdate.name = name.trim();
+      }
+
       const updatedUser = await prisma.user.update({
         where: { id: req.user.id },
-        data: { name: name.trim() },
+        data: dataToUpdate,
         select: { id: true, name: true, email: true, role: true, tenantId: true, teamId: true }
       });
+
+      if (whatsappPhone) {
+        await prisma.employeeProfile.upsert({
+          where: { userId: req.user.id },
+          update: { phone: whatsappPhone },
+          create: {
+            userId: req.user.id,
+            phone: whatsappPhone,
+            dailyCallTarget: 30,
+            department: 'Sales',
+            isActive: true,
+            timezone: 'Africa/Cairo',
+          }
+        });
+      }
 
       // Issue a new token with the updated name
       const token = jwt.sign(
@@ -3103,7 +3125,7 @@ async function startServer() {
       res.json({ user: updatedUser, token });
     } catch (error) {
       console.error(error);
-      res.status(500).json({ error: 'فشل تحديث الاسم' });
+      res.status(500).json({ error: 'فشل تحديث البيانات' });
     }
   });
 

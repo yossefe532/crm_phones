@@ -46,6 +46,7 @@ interface Stats {
     dailyCallTarget: number;
     callsToday: number;
     agreedToday: number;
+    phone?: string | null;
   }>;
   leaderboard?: Array<{
     userId: number;
@@ -516,17 +517,24 @@ export default function Dashboard() {
                       <td className="p-4 text-center">
                         <button 
                           onClick={() => {
+                            if (!member.phone) {
+                              alert('الموظف لم يقم بإضافة رقم الواتساب الخاص به بعد');
+                              return;
+                            }
                             const msg = isDone 
                               ? `عاش يا ${member.name.split(' ')[0]}! بطل والله على مجهودك النهاردة 🏆`
                               : `يا ${member.name.split(' ')[0]}، التارجت لسه مخلصش. محتاجين نشد شوية، بالتوفيق! 💪`;
-                            const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(msg)}`;
+                            const cleanPhone = member.phone.replace(/\D/g, '');
+                            const finalPhone = cleanPhone.startsWith('2') ? cleanPhone : `2${cleanPhone}`;
+                            const whatsappUrl = `https://wa.me/${finalPhone}?text=${encodeURIComponent(msg)}`;
                             window.open(whatsappUrl, '_blank');
                           }}
                           className={clsx(
                             "w-10 h-10 rounded-xl flex items-center justify-center transition-all shadow-sm hover:shadow-lg active:scale-90 mx-auto",
+                            !member.phone ? "bg-slate-100 text-slate-300 cursor-not-allowed" :
                             isDone ? "bg-emerald-50 text-emerald-600 hover:bg-emerald-500 hover:text-white" : "bg-amber-50 text-amber-600 hover:bg-amber-500 hover:text-white"
                           )}
-                          title={isDone ? "تهنئة" : "متابعة"}
+                          title={!member.phone ? "رقم الواتساب غير متوفر" : isDone ? "تهنئة" : "متابعة"}
                         >
                           <MessageCircle size={20} />
                         </button>

@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
+import WhatsAppPrompt from '../WhatsAppPrompt';
 import { Menu } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 
@@ -9,6 +10,7 @@ export default function Layout() {
   return (
     <div className="flex h-screen bg-gradient-to-br from-slate-50 to-slate-200 overflow-hidden">
       <Sidebar />
+      <WhatsAppPrompt />
       
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
         <header className="md:hidden sticky top-0 flex items-center justify-between p-4 bg-white/90 backdrop-blur-md border-b border-slate-200 shadow-sm z-20">
