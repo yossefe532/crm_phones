@@ -6,8 +6,10 @@ import {
   XCircle,
   Database,
   Download,
-  Table2
+  Table2,
+  MessageCircle
 } from 'lucide-react';
+import clsx from 'clsx';
 import api from '../services/api';
 import { useAuth } from '../store/useAuth';
 import { 
@@ -32,6 +34,12 @@ interface Stats {
   dailyCallTarget?: number | null;
   recontact?: number;
   scope?: 'GLOBAL' | 'TEAM' | 'AGENT';
+  teamMembersPerformance?: Array<{
+    userId: number;
+    name: string;
+    dailyCallTarget: number;
+    callsToday: number;
+  }>;
 }
 
 export default function Dashboard() {
@@ -197,9 +205,75 @@ export default function Dashboard() {
 
         <div className="glass-card p-6">
           <h3 className="text-xl font-bold text-slate-800 mb-6">أداء الفريق</h3>
-          <div className="h-64 w-full flex items-center justify-center text-slate-400">
-            <p>{(user?.role === 'ADMIN' || user?.role === 'TEAM_LEAD') ? 'جاري تجميع بيانات الفريق...' : 'خاص بالمدير فقط'}</p>
-          </div>
+          {stats.teamMembersPerformance && stats.teamMembersPerformance.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-right">
+                <thead className="bg-slate-50/50 border-b border-slate-100">
+                  <tr>
+                    <th className="p-3 text-sm font-semibold text-slate-600">الموظف</th>
+                    <th className="p-3 text-sm font-semibold text-slate-600">الإنجاز</th>
+                    <th className="p-3 text-sm font-semibold text-slate-600">الحالة</th>
+                    <th className="p-3 text-sm font-semibold text-slate-600">إجراء</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {stats.teamMembersPerformance.map((member) => {
+                    const isDone = member.callsToday >= member.dailyCallTarget;
+                    const progress = Math.min(100, Math.round((member.callsToday / member.dailyCallTarget) * 100));
+                    
+                    return (
+                      <tr key={member.userId} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="p-3">
+                          <p className="font-bold text-slate-800 text-sm">{member.name}</p>
+                          <p className="text-xs text-slate-500">الهدف: {member.dailyCallTarget}</p>
+                        </td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden min-w-[60px]">
+                              <div 
+                                className={clsx("h-full transition-all duration-500", isDone ? "bg-emerald-500" : "bg-amber-500")}
+                                style={{ width: `${progress}%` }}
+                              />
+                            </div>
+                            <span className="text-xs font-bold text-slate-600">{member.callsToday}</span>
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          {isDone ? (
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold">مكتمل ✅</span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold">جاري العمل..</span>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          <button 
+                            onClick={() => {
+                              const msg = isDone 
+                                ? `عاش يا ${member.name.split(' ')[0]}! بطل والله على مجهودك النهاردة 🏆`
+                                : `يا ${member.name.split(' ')[0]}، التارجت لسه مخلصش. محتاجين نشد شوية، بالتوفيق! 💪`;
+                              const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(msg)}`;
+                              window.open(whatsappUrl, '_blank');
+                            }}
+                            className={clsx(
+                              "p-2 rounded-lg transition-colors",
+                              isDone ? "hover:bg-emerald-100 text-emerald-600" : "hover:bg-amber-100 text-amber-600"
+                            )}
+                            title={isDone ? "تهنئة" : "متابعة"}
+                          >
+                            <MessageCircle size={18} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="h-64 w-full flex items-center justify-center text-slate-400">
+              <p>{(user?.role === 'ADMIN' || user?.role === 'TEAM_LEAD') ? 'لا يوجد موظفين حالياً' : 'خاص بالمدير فقط'}</p>
+            </div>
+          )}
         </div>
       </div>
     </div>

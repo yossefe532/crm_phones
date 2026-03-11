@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { jwtDecode } from 'jwt-decode';
 import api from '../services/api';
+import { subscribeToPush } from '../utils/notifications';
 
 interface User {
   id: number;
@@ -29,6 +30,7 @@ export const useAuth = create<AuthState>((set) => ({
     localStorage.setItem('token', token);
     set({ user, token, isAuthenticated: true });
     api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    void subscribeToPush();
   },
 
   logout: () => {
@@ -61,6 +63,7 @@ export const useAuth = create<AuthState>((set) => ({
             isAuthenticated: true 
           });
           api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+          void subscribeToPush();
         }
       } catch (error) {
         localStorage.removeItem('token');

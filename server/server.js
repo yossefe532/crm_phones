@@ -8,12 +8,26 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
+import webpush from 'web-push';
+import cron from 'node-cron';
 import { runPrismaBootstrap } from './scripts/prisma-bootstrap.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 dotenv.config({ path: join(__dirname, '.env') });
+
+// Configure Web Push
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    `mailto:${process.env.VAPID_EMAIL || 'admin@edicon.com'}`,
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  );
+} else {
+  console.warn('[startup] VAPID keys are missing. Push notifications will be disabled.');
+}
+
 if (!process.env.DATABASE_URL) {
   process.env.DATABASE_URL = process.env.RAILWAY_ENVIRONMENT
     ? 'file:/data/crm.db'
@@ -563,6 +577,106 @@ async function startServer() {
       res.status(500).json({ error: 'Login failed' });
     }
   });
+
+  // --- Push Notification Routes ---
+
+  // POST /api/notifications/subscribe
+  app.post('/api/notifications/subscribe', authenticateToken, async (req, res) => {
+    const { endpoint, keys } = req.body;
+    if (!endpoint || !keys?.p256dh || !keys?.auth) {
+      return res.status(400).json({ error: 'Invalid subscription object' });
+    }
+
+    try {
+      await prisma.pushSubscription.upsert({
+        where: { endpoint },
+        update: {
+          userId: req.user.id,
+          p256dh: keys.p256dh,
+          auth: keys.auth,
+        },
+        create: {
+          endpoint,
+          p256dh: keys.p256dh,
+          auth: keys.auth,
+          userId: req.user.id,
+        },
+      });
+      res.status(201).json({ message: 'Subscribed successfully' });
+    } catch (error) {
+      console.error('Push subscribe error:', error);
+      res.status(500).json({ error: 'Failed to subscribe' });
+    }
+  });
+
+  const sendPushNotification = async (userId, payload) => {
+    try {
+      const subscriptions = await prisma.pushSubscription.findMany({
+        where: { userId },
+      });
+
+      const promises = subscriptions.map((sub) => {
+        const pushSubscription = {
+          endpoint: sub.endpoint,
+          keys: {
+            p256dh: sub.p256dh,
+            auth: sub.auth,
+          },
+        };
+        return webpush.sendNotification(pushSubscription, JSON.stringify(payload))
+          .catch(async (err) => {
+            if (err.statusCode === 410 || err.statusCode === 404) {
+              // Subscription expired or no longer valid, delete it
+              await prisma.pushSubscription.delete({ where: { id: sub.id } }).catch(() => {});
+            }
+            console.error('Error sending push notification:', err.message);
+          });
+      });
+
+      await Promise.all(promises);
+    } catch (error) {
+      console.error('sendPushNotification error:', error);
+    }
+  };
+
+  const checkTargetCompletion = async (userId) => {
+    try {
+      const user = await prisma.user.findFirst({
+        where: { id: userId },
+        include: { employeeProfile: true, team: { select: { leadId: true } } },
+      });
+      if (!user || user.role !== 'SALES') return;
+
+      const target = user.employeeProfile?.dailyCallTarget || 30;
+      const { start, end } = buildDayRange();
+      const count = await prisma.interaction.count({
+        where: {
+          userId,
+          type: { in: ['CALL', 'SEND'] },
+          date: { gte: start, lt: end },
+        },
+      });
+
+      if (count === target) {
+        // Just reached the target! Notify the user and the team lead
+        await sendPushNotification(user.id, {
+          title: 'عاش يا بطل! 🏆',
+          body: `خلصت التارجت بتاعك النهاردة. استمر!`,
+          icon: '/icon-192.png',
+        });
+
+        if (user.team?.leadId) {
+          await sendPushNotification(user.team.leadId, {
+            title: 'واحد من فريقك خلص! 🚀',
+            body: `الموظف ${user.name} خلص التارجت بتاعه النهاردة.`,
+            icon: '/icon-192.png',
+          });
+        }
+      }
+    } catch (error) {
+      console.error('checkTargetCompletion error:', error);
+    }
+  };
 
   // POST /api/users (Admin + Team Lead)
   app.post('/api/users', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
@@ -2051,6 +2165,8 @@ async function startServer() {
             notes: notes || null,
           },
         });
+        // Check for target completion after interaction is created
+        checkTargetCompletion(req.user.id).catch(() => {});
 
         return updatedLead;
       });
@@ -2324,6 +2440,8 @@ async function startServer() {
             notes: notes || null,
           },
         });
+        // Check for target completion after interaction is created
+        checkTargetCompletion(req.user.id).catch(() => {});
 
         return lead;
       });
@@ -2537,6 +2655,8 @@ async function startServer() {
               notes: createdLead.notes || null,
             },
           });
+          // Check for target completion after interaction is created
+          checkTargetCompletion(req.user.id).catch(() => {});
         }
 
         return createdLead;
@@ -2618,6 +2738,8 @@ async function startServer() {
               notes: notes || null,
             },
           });
+          // Check for target completion after interaction is created
+          checkTargetCompletion(req.user.id).catch(() => {});
         }
 
         return updatedLead;
@@ -2716,6 +2838,38 @@ async function startServer() {
       let teamMembersPerformance = [];
       if (actor.role === 'ADMIN') {
         poolCount = await prisma.lead.count({ where: buildPoolWhere({ tenantId: actor.tenantId }) });
+        
+        const allSales = await prisma.user.findMany({
+          where: { role: 'SALES', tenantId: actor.tenantId },
+          select: {
+            id: true,
+            name: true,
+            employeeProfile: { select: { dailyCallTarget: true } },
+          },
+        });
+        const salesIds = allSales.map(m => m.id);
+        
+        const callsTodayByAgent = salesIds.length ? await prisma.interaction.groupBy({
+          by: ['userId'],
+          where: {
+            userId: { in: salesIds },
+            type: { in: ['CALL', 'SEND'] },
+            date: { gte: start, lt: end },
+          },
+          _count: { _all: true },
+        }) : [];
+
+        const callsMap = callsTodayByAgent.reduce((acc, row) => {
+          acc[row.userId] = row._count._all;
+          return acc;
+        }, {});
+
+        teamMembersPerformance = allSales.map((m) => ({
+          userId: m.id,
+          name: m.name,
+          dailyCallTarget: m.employeeProfile?.dailyCallTarget || 30,
+          callsToday: callsMap[m.id] || 0,
+        }));
       } else if (actor.role === 'SALES') {
         const profile = await ensureEmployeeProfile(req.user.id);
         dailyCallTarget = profile.dailyCallTarget;
@@ -2740,63 +2894,46 @@ async function startServer() {
           where: { role: 'SALES', teamId: actor.teamId || -1, tenantId: actor.tenantId },
           select: {
             id: true,
+            name: true,
             employeeProfile: { select: { dailyCallTarget: true } },
           },
         });
         const salesIds = teamMembers.map((member) => member.id);
-        dailyCallTarget = teamMembers.reduce((sum, member) => sum + (member.employeeProfile?.dailyCallTarget || 0), 0);
+        dailyCallTarget = teamMembers.reduce((sum, member) => sum + (member.employeeProfile?.dailyCallTarget || 30), 0);
+        
+        const callsTodayByAgent = salesIds.length ? await prisma.interaction.groupBy({
+          by: ['userId'],
+          where: {
+            userId: { in: salesIds },
+            type: { in: ['CALL', 'SEND'] },
+            date: { gte: start, lt: end },
+          },
+          _count: { _all: true },
+        }) : [];
+
+        const callsMap = callsTodayByAgent.reduce((acc, row) => {
+          acc[row.userId] = row._count._all;
+          return acc;
+        }, {});
+
         teamMembersPerformance = teamMembers.map((member) => ({
           userId: member.id,
-          dailyCallTarget: member.employeeProfile?.dailyCallTarget || 0,
+          name: member.name,
+          dailyCallTarget: member.employeeProfile?.dailyCallTarget || 30,
+          callsToday: callsMap[member.id] || 0,
         }));
-        callsToday = salesIds.length
-          ? await prisma.interaction.count({
-              where: {
-                type: { in: ['CALL', 'SEND'] },
-                date: { gte: start, lt: end },
-                lead: { agentId: { in: salesIds }, tenantId: actor.tenantId },
-              },
-            })
-          : 0;
+
+        callsToday = teamMembersPerformance.reduce((sum, m) => sum + m.callsToday, 0);
+        
         callsYesterday = salesIds.length
           ? await prisma.interaction.count({
               where: {
+                userId: { in: salesIds },
                 type: { in: ['CALL', 'SEND'] },
                 date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
-                lead: { agentId: { in: salesIds }, tenantId: actor.tenantId },
               },
             })
           : 0;
-        if (salesIds.length) {
-          const callsByAgentRows = await prisma.interaction.findMany({
-            where: {
-              type: { in: ['CALL', 'SEND'] },
-              date: { gte: start, lt: end },
-              lead: { agentId: { in: salesIds }, tenantId: actor.tenantId },
-            },
-            select: { leadId: true },
-          });
-          const callsByAgentMap = callsByAgentRows.reduce((acc, row) => {
-            acc.set(row.leadId, (acc.get(row.leadId) || 0) + 1);
-            return acc;
-          }, new Map());
-          const leadIds = [...callsByAgentMap.keys()];
-          const mappedLeads = leadIds.length
-            ? await prisma.lead.findMany({
-                where: { id: { in: leadIds }, tenantId: actor.tenantId },
-                select: { id: true, agentId: true },
-              })
-            : [];
-          const interactionByAgent = mappedLeads.reduce((acc, lead) => {
-            const leadMetric = callsByAgentMap.get(lead.id) || 0;
-            if (lead.agentId) acc[lead.agentId] = (acc[lead.agentId] || 0) + leadMetric;
-            return acc;
-          }, {});
-          teamMembersPerformance = teamMembersPerformance.map((member) => ({
-            ...member,
-            callsToday: interactionByAgent[member.userId] || 0,
-          }));
-        }
         poolCount = await prisma.lead.count({ where: buildPoolWhere({ teamId: actor.teamId, tenantId: actor.tenantId }) });
       }
       const safeTotal = safeCount(total);
@@ -3476,6 +3613,94 @@ async function startServer() {
       res.sendFile(join(publicDir, 'index.html'));
     });
   }
+
+  // --- Cron Jobs ---
+
+  // 1. Hourly Reminder for Sales (09:00 - 22:00)
+  cron.schedule('0 9-22 * * *', async () => {
+    console.log('[cron] Running hourly reminder check...');
+    try {
+      const { start, end } = buildDayRange();
+      const salesUsers = await prisma.user.findMany({
+        where: { role: 'SALES' },
+        include: { employeeProfile: true },
+      });
+
+      for (const user of salesUsers) {
+        const target = user.employeeProfile?.dailyCallTarget || 30;
+        const callsCount = await prisma.interaction.count({
+          where: {
+            userId: user.id,
+            type: { in: ['CALL', 'SEND'] },
+            date: { gte: start, lt: end },
+          },
+        });
+
+        if (callsCount < target) {
+          await sendPushNotification(user.id, {
+            title: 'تذكير بالهدف اليومي 🎯',
+            body: `فاضلك ${target - callsCount} مكالمة عشان تخلص التارجت بتاعك النهاردة. شد حيلك!`,
+            icon: '/icon-192.png',
+          });
+        }
+      }
+    } catch (error) {
+      console.error('[cron] Hourly reminder error:', error);
+    }
+  });
+
+  // 2. Daily Summary for Team Leads (23:30)
+  cron.schedule('30 23 * * *', async () => {
+    console.log('[cron] Running daily summary for team leads...');
+    try {
+      const { start, end } = buildDayRange();
+      const teamLeads = await prisma.user.findMany({
+        where: { role: 'TEAM_LEAD' },
+      });
+
+      for (const lead of teamLeads) {
+        if (!lead.teamId) continue;
+
+        const teamMembers = await prisma.user.findMany({
+          where: { teamId: lead.teamId, role: 'SALES' },
+          include: { employeeProfile: true },
+        });
+
+        let achieved = 0;
+        let missed = 0;
+        const missedNames = [];
+
+        for (const member of teamMembers) {
+          const target = member.employeeProfile?.dailyCallTarget || 30;
+          const count = await prisma.interaction.count({
+            where: {
+              userId: member.id,
+              type: { in: ['CALL', 'SEND'] },
+              date: { gte: start, lt: end },
+            },
+          });
+
+          if (count >= target) achieved++;
+          else {
+            missed++;
+            missedNames.push(member.name);
+          }
+        }
+
+        const body = missed > 0 
+          ? `النهاردة ${achieved} واحد خلصوا التارجت و ${missed} لسه (${missedNames.join(', ')}).`
+          : `كل الفريق خلص التارجت النهاردة! عاش يا وحوش 🚀`;
+
+        await sendPushNotification(lead.id, {
+          title: 'ملخص الأداء اليومي 📊',
+          body,
+          icon: '/icon-192.png',
+        });
+      }
+    } catch (error) {
+      console.error('[cron] Daily summary error:', error);
+    }
+  });
 
   app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
