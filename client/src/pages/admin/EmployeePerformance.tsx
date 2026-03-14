@@ -29,6 +29,7 @@ interface EmployeePerformancePayload {
     team?: { id: number; name: string } | null;
     isActive: boolean;
     dailyCallTarget: number;
+    dailyApprovalTarget: number;
   };
   periodDays: number;
   totals: {
@@ -37,7 +38,11 @@ interface EmployeePerformancePayload {
     rejected: number;
     hesitant: number;
     wrongNumber: number;
+    callTarget: number;
+    approvalTarget: number;
     target: number;
+    callsCompletionRate: number;
+    approvalsCompletionRate: number;
     completionRate: number;
   };
   series: PerformanceRow[];
@@ -161,8 +166,10 @@ export default function EmployeePerformance() {
               </ResponsiveContainer>
             </div>
             <div className="mt-4 grid md:grid-cols-2 gap-3 text-sm">
-              <div className="p-3 rounded-xl bg-slate-100 flex items-center gap-2"><Target size={16} /> الهدف الكلي: {payload.totals.target}</div>
-              <div className="p-3 rounded-xl bg-slate-100 flex items-center gap-2"><Activity size={16} /> الهدف اليومي: {payload.employee.dailyCallTarget}</div>
+              <div className="p-3 rounded-xl bg-slate-100 flex items-center gap-2"><Target size={16} /> هدف المكالمات الكلي: {payload.totals.callTarget}</div>
+              <div className="p-3 rounded-xl bg-slate-100 flex items-center gap-2"><Target size={16} /> هدف الموافقات الكلي: {payload.totals.approvalTarget}</div>
+              <div className="p-3 rounded-xl bg-slate-100 flex items-center gap-2"><Activity size={16} /> هدف المكالمات اليومي: {payload.employee.dailyCallTarget}</div>
+              <div className="p-3 rounded-xl bg-slate-100 flex items-center gap-2"><Activity size={16} /> هدف الموافقات اليومي: {payload.employee.dailyApprovalTarget}</div>
             </div>
           </div>
         </>

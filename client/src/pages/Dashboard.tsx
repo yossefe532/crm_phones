@@ -39,12 +39,16 @@ interface Stats {
   callsToday?: number;
   callsYesterday?: number;
   dailyCallTarget?: number | null;
+  approvalsToday?: number;
+  approvalsYesterday?: number;
+  dailyApprovalTarget?: number | null;
   recontact?: number;
   scope?: 'GLOBAL' | 'TEAM' | 'AGENT';
   teamMembersPerformance?: Array<{
     userId: number;
     name: string;
     dailyCallTarget: number;
+    dailyApprovalTarget?: number;
     callsToday: number;
     agreedToday: number;
     phone?: string | null;
@@ -55,6 +59,7 @@ interface Stats {
     callsToday: number;
     agreedToday: number;
     dailyCallTarget: number;
+    dailyApprovalTarget?: number;
   }>;
 }
 
@@ -244,57 +249,107 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {(user?.role === 'SALES' || user?.role === 'TEAM_LEAD') && (
-        <div className="glass-card p-5 md:p-6 border-l-4 border-emerald-500 overflow-hidden relative group">
-          <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:scale-110 transition-transform duration-700">
-            <TrendingUp size={120} />
-          </div>
-          <div className="relative z-10">
-            <h3 className="text-base md:text-lg font-black text-slate-800 mb-4 flex items-center gap-2">
-              <Trophy size={20} className="text-amber-500" />
-              {user?.role === 'TEAM_LEAD' ? 'هدف الفريق اليومي' : 'هدف المكالمات اليومي'}
-            </h3>
-            <div className="flex items-end justify-between mb-3">
-              <div>
-                <p className="text-2xl md:text-3xl font-black text-slate-900 leading-none">
-                  {stats.callsToday || 0}
-                  <span className="text-slate-400 text-sm md:text-lg font-medium mx-2">/ {stats.dailyCallTarget || 30}</span>
-                </p>
-                <p className="text-xs text-slate-500 font-bold mt-2 uppercase tracking-widest">المكالمات المنجزة</p>
+      {(user?.role === 'SALES' || user?.role === 'TEAM_LEAD') && (() => {
+        const callsToday = stats.callsToday || 0;
+        const approvalsToday = stats.approvalsToday || 0;
+        const callTarget = stats.dailyCallTarget || 30;
+        const approvalTarget = stats.dailyApprovalTarget || 0;
+        const done = callsToday >= callTarget && approvalsToday >= approvalTarget;
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="glass-card p-5 md:p-6 border-l-4 border-indigo-500 overflow-hidden relative group">
+              <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:scale-110 transition-transform duration-700">
+                <TrendingUp size={120} />
               </div>
-              <div className="text-right">
-                <p className="text-lg md:text-xl font-black text-emerald-600">
-                  {Math.min(100, Math.round(((stats.callsToday || 0) / Math.max(1, stats.dailyCallTarget || 30)) * 100))}%
-                </p>
-                <p className="text-[10px] text-slate-400 font-bold">نسبة الإنجاز</p>
+              <div className="relative z-10">
+                <h3 className="text-base md:text-lg font-black text-slate-800 mb-4 flex items-center gap-2">
+                  <Trophy size={20} className="text-amber-500" />
+                  {user?.role === 'TEAM_LEAD' ? 'هدف مكالمات الفريق' : 'هدف المكالمات'}
+                </h3>
+                <div className="flex items-end justify-between mb-3">
+                  <div>
+                    <p className="text-2xl md:text-3xl font-black text-slate-900 leading-none">
+                      {callsToday}
+                      <span className="text-slate-400 text-sm md:text-lg font-medium mx-2">/ {callTarget}</span>
+                    </p>
+                    <p className="text-xs text-slate-500 font-bold mt-2 uppercase tracking-widest">المكالمات المنجزة</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg md:text-xl font-black text-indigo-600">
+                      {Math.min(100, Math.round((callsToday / Math.max(1, callTarget)) * 100))}%
+                    </p>
+                    <p className="text-[10px] text-slate-400 font-bold">نسبة الإنجاز</p>
+                  </div>
+                </div>
+                <div className="w-full h-3 md:h-4 rounded-full bg-slate-100 overflow-hidden shadow-inner border border-slate-50">
+                  <div
+                    className={clsx(
+                      "h-full transition-all duration-1000 ease-out rounded-full shadow-sm",
+                      callsToday >= callTarget ? "bg-gradient-to-r from-emerald-400 to-emerald-600" : "bg-gradient-to-r from-indigo-400 to-indigo-600"
+                    )}
+                    style={{
+                      width: `${Math.min(100, Math.round((callsToday / Math.max(1, callTarget)) * 100))}%`,
+                    }}
+                  />
+                </div>
+                <div className="flex justify-between mt-3">
+                  <p className="text-[10px] md:text-xs text-slate-400 font-bold flex items-center gap-1">
+                    <TrendingUp size={12} />
+                    مكالمات أمس: {stats.callsYesterday || 0}
+                  </p>
+                </div>
               </div>
             </div>
-            <div className="w-full h-3 md:h-4 rounded-full bg-slate-100 overflow-hidden shadow-inner border border-slate-50">
-              <div
-                className={clsx(
-                  "h-full transition-all duration-1000 ease-out rounded-full shadow-sm",
-                  (stats.callsToday || 0) >= (stats.dailyCallTarget || 30) ? "bg-gradient-to-r from-emerald-400 to-emerald-600" : "bg-gradient-to-r from-indigo-400 to-indigo-600"
-                )}
-                style={{
-                  width: `${Math.min(
-                    100,
-                    Math.round(((stats.callsToday || 0) / Math.max(1, stats.dailyCallTarget || 1)) * 100)
-                  )}%`,
-                }}
-              />
-            </div>
-            <div className="flex justify-between mt-3">
-              <p className="text-[10px] md:text-xs text-slate-400 font-bold flex items-center gap-1">
-                <TrendingUp size={12} />
-                مكالمات أمس: {stats.callsYesterday || 0}
-              </p>
-              {(stats.callsToday || 0) >= (stats.dailyCallTarget || 30) && (
-                <p className="text-[10px] md:text-xs text-emerald-600 font-black animate-pulse">تم تحقيق الهدف بنجاح! 🎉</p>
-              )}
+
+            <div className="glass-card p-5 md:p-6 border-l-4 border-emerald-500 overflow-hidden relative group">
+              <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:scale-110 transition-transform duration-700">
+                <TrendingUp size={120} />
+              </div>
+              <div className="relative z-10">
+                <h3 className="text-base md:text-lg font-black text-slate-800 mb-4 flex items-center gap-2">
+                  <Trophy size={20} className="text-emerald-500" />
+                  {user?.role === 'TEAM_LEAD' ? 'هدف موافقات الفريق' : 'هدف الموافقات'}
+                </h3>
+                <div className="flex items-end justify-between mb-3">
+                  <div>
+                    <p className="text-2xl md:text-3xl font-black text-slate-900 leading-none">
+                      {approvalsToday}
+                      <span className="text-slate-400 text-sm md:text-lg font-medium mx-2">/ {approvalTarget}</span>
+                    </p>
+                    <p className="text-xs text-slate-500 font-bold mt-2 uppercase tracking-widest">الموافقات المنجزة</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg md:text-xl font-black text-emerald-600">
+                      {approvalTarget > 0 ? Math.min(100, Math.round((approvalsToday / Math.max(1, approvalTarget)) * 100)) : 100}%
+                    </p>
+                    <p className="text-[10px] text-slate-400 font-bold">نسبة الإنجاز</p>
+                  </div>
+                </div>
+                <div className="w-full h-3 md:h-4 rounded-full bg-slate-100 overflow-hidden shadow-inner border border-slate-50">
+                  <div
+                    className={clsx(
+                      "h-full transition-all duration-1000 ease-out rounded-full shadow-sm",
+                      approvalsToday >= approvalTarget ? "bg-gradient-to-r from-emerald-400 to-emerald-600" : "bg-gradient-to-r from-indigo-400 to-indigo-600"
+                    )}
+                    style={{
+                      width: `${approvalTarget > 0 ? Math.min(100, Math.round((approvalsToday / Math.max(1, approvalTarget)) * 100)) : 100}%`,
+                    }}
+                  />
+                </div>
+                <div className="flex justify-between mt-3">
+                  <p className="text-[10px] md:text-xs text-slate-400 font-bold flex items-center gap-1">
+                    <TrendingUp size={12} />
+                    موافقات أمس: {stats.approvalsYesterday || 0}
+                  </p>
+                  {done && (
+                    <p className="text-[10px] md:text-xs text-emerald-600 font-black animate-pulse">تم تحقيق الهدف بنجاح! 🎉</p>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
         <div className="glass-card p-5 md:p-8 flex flex-col h-full bg-white/80 backdrop-blur-sm">
@@ -463,7 +518,8 @@ export default function Dashboard() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {stats.teamMembersPerformance.map((member) => {
-                  const isDone = member.callsToday >= member.dailyCallTarget;
+                  const approvalTarget = member.dailyApprovalTarget ?? 0;
+                  const isDone = member.callsToday >= member.dailyCallTarget && member.agreedToday >= approvalTarget;
                   const progress = Math.min(100, Math.round((member.callsToday / member.dailyCallTarget) * 100));
                   const successRate = member.callsToday > 0 
                     ? Math.round((member.agreedToday / member.callsToday) * 100) 
@@ -478,7 +534,7 @@ export default function Dashboard() {
                           </div>
                           <div>
                             <p className="font-black text-slate-800 text-sm md:text-base leading-tight group-hover:text-indigo-700 transition-colors">{member.name}</p>
-                            <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-tighter">الهدف: {member.dailyCallTarget}</p>
+                            <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-tighter">الهدف: {member.dailyCallTarget}{approvalTarget > 0 ? ` / ${approvalTarget}` : ''}</p>
                           </div>
                         </div>
                       </td>

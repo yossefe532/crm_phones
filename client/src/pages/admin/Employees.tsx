@@ -12,6 +12,7 @@ interface EmployeeProfile {
   phone: string | null;
   timezone: string;
   dailyCallTarget: number;
+  dailyApprovalTarget: number;
   isActive: boolean;
 }
 
@@ -36,6 +37,7 @@ interface CreateAgentForm {
   password: string;
   role: 'SALES' | 'TEAM_LEAD';
   dailyCallTarget: number;
+  dailyApprovalTarget: number;
   department: string;
   jobTitle: string;
   phone: string;
@@ -47,6 +49,7 @@ interface EditProfileForm {
   name: string;
   email: string;
   dailyCallTarget: number;
+  dailyApprovalTarget: number;
   department: string;
   jobTitle: string;
   phone: string;
@@ -60,6 +63,7 @@ const defaultCreateForm: CreateAgentForm = {
   password: '',
   role: 'SALES',
   dailyCallTarget: 30,
+  dailyApprovalTarget: 0,
   department: 'Sales',
   jobTitle: '',
   phone: '',
@@ -80,12 +84,14 @@ export default function Employees() {
   const [success, setSuccess] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [bulkTarget, setBulkTarget] = useState<number | ''>('');
+  const [bulkApprovalTarget, setBulkApprovalTarget] = useState<number | ''>('');
   const [isUpdatingBulk, setIsUpdatingBulk] = useState(false);
   const [createForm, setCreateForm] = useState<CreateAgentForm>(defaultCreateForm);
   const [editForm, setEditForm] = useState<EditProfileForm>({
     name: '',
     email: '',
     dailyCallTarget: 30,
+    dailyApprovalTarget: 0,
     department: 'Sales',
     jobTitle: '',
     phone: '',
@@ -166,6 +172,10 @@ export default function Employees() {
       setError('الهدف اليومي يجب أن يكون رقمًا صحيحًا بين 1 و 500');
       return;
     }
+    if (createForm.role === 'SALES' && (!Number.isInteger(createForm.dailyApprovalTarget) || createForm.dailyApprovalTarget < 0 || createForm.dailyApprovalTarget > 200)) {
+      setError('هدف الموافقات يجب أن يكون رقمًا صحيحًا بين 0 و 200');
+      return;
+    }
     if (createForm.role === 'TEAM_LEAD' && user?.role !== 'ADMIN') {
       setError('فقط الأدمن يمكنه إنشاء Team Lead');
       return;
@@ -199,6 +209,7 @@ export default function Employees() {
             ? {
                 employeeProfile: {
                   dailyCallTarget: createForm.dailyCallTarget,
+                  dailyApprovalTarget: createForm.dailyApprovalTarget,
                   department: createForm.department.trim() || 'Sales',
                   jobTitle: createForm.jobTitle.trim() || null,
                   phone: createForm.phone.trim() || null,
@@ -227,6 +238,7 @@ export default function Employees() {
       name: employee.name,
       email: employee.email,
       dailyCallTarget: employee.profile?.dailyCallTarget || 30,
+      dailyApprovalTarget: employee.profile?.dailyApprovalTarget || 0,
       department: employee.profile?.department || 'Sales',
       jobTitle: employee.profile?.jobTitle || '',
       phone: employee.profile?.phone || '',
@@ -240,6 +252,10 @@ export default function Employees() {
     resetAlerts();
     if (!Number.isInteger(editForm.dailyCallTarget) || editForm.dailyCallTarget < 1 || editForm.dailyCallTarget > 500) {
       setError('الهدف اليومي يجب أن يكون رقمًا صحيحًا بين 1 و 500');
+      return;
+    }
+    if (!Number.isInteger(editForm.dailyApprovalTarget) || editForm.dailyApprovalTarget < 0 || editForm.dailyApprovalTarget > 200) {
+      setError('هدف الموافقات يجب أن يكون رقمًا صحيحًا بين 0 و 200');
       return;
     }
     if (!editForm.department.trim()) {
@@ -261,6 +277,7 @@ export default function Employees() {
         name: editForm.name.trim(),
         email: editForm.email.trim().toLowerCase(),
         dailyCallTarget: editForm.dailyCallTarget,
+        dailyApprovalTarget: editForm.dailyApprovalTarget,
         department: editForm.department.trim(),
         jobTitle: editForm.jobTitle.trim() || null,
         phone: editForm.phone.trim() || null,
@@ -297,8 +314,18 @@ export default function Employees() {
   };
 
   const handleBulkTargetUpdate = async () => {
-    if (!bulkTarget || bulkTarget < 1) {
+    const callTarget = bulkTarget === '' ? null : bulkTarget;
+    const approvalTarget = bulkApprovalTarget === '' ? null : bulkApprovalTarget;
+    if (callTarget === null && approvalTarget === null) {
       setError('يرجى إدخال تارجت صحيح');
+      return;
+    }
+    if (callTarget !== null && (!Number.isInteger(callTarget) || callTarget < 1 || callTarget > 500)) {
+      setError('هدف المكالمات يجب أن يكون رقمًا صحيحًا بين 1 و 500');
+      return;
+    }
+    if (approvalTarget !== null && (!Number.isInteger(approvalTarget) || approvalTarget < 0 || approvalTarget > 200)) {
+      setError('هدف الموافقات يجب أن يكون رقمًا صحيحًا بين 0 و 200');
       return;
     }
     
@@ -322,15 +349,17 @@ export default function Employees() {
     resetAlerts();
     try {
       if (user?.role === 'TEAM_LEAD' && user.teamId) {
-        const response = await api.put(`/admin/teams/${user.teamId}/update-target`, { target: Number(bulkTarget) });
-        setSuccess(response.data?.message || `تم تحديث التارجت لجميع أعضاء الفريق إلى ${bulkTarget}`);
+        const response = await api.put(`/admin/teams/${user.teamId}/update-target`, { dailyCallTarget: callTarget, dailyApprovalTarget: approvalTarget });
+        setSuccess(response.data?.message || `تم تحديث التارجت لجميع أعضاء الفريق`);
         fetchEmployees(search);
         setBulkTarget('');
+        setBulkApprovalTarget('');
       } else if (user?.role === 'ADMIN') {
-        const response = await api.put(`/admin/teams/all/update-target`, { target: Number(bulkTarget) });
-        setSuccess(response.data?.message || `تم تحديث التارجت لجميع الموظفين إلى ${bulkTarget}`);
+        const response = await api.put(`/admin/teams/all/update-target`, { dailyCallTarget: callTarget, dailyApprovalTarget: approvalTarget });
+        setSuccess(response.data?.message || `تم تحديث التارجت لجميع الموظفين`);
         fetchEmployees(search);
         setBulkTarget('');
+        setBulkApprovalTarget('');
       } else {
         setError('هذه الخاصية متاحة للمديرين ورؤساء الفرق فقط');
       }
@@ -410,8 +439,9 @@ export default function Employees() {
           </div>
         )}
         {createForm.role === 'SALES' ? (
-          <div className="grid md:grid-cols-4 gap-3">
+          <div className="grid md:grid-cols-5 gap-3">
             <input className="input-field" type="number" min={1} max={500} placeholder="هدف المكالمات اليومي" value={createForm.dailyCallTarget} onChange={(e) => setCreateForm((prev) => ({ ...prev, dailyCallTarget: Number(e.target.value) }))} />
+            <input className="input-field" type="number" min={0} max={200} placeholder="هدف الموافقات اليومي" value={createForm.dailyApprovalTarget} onChange={(e) => setCreateForm((prev) => ({ ...prev, dailyApprovalTarget: Number(e.target.value) }))} />
             {user?.role === 'ADMIN' && (
               <select className="input-field" value={createForm.teamId} onChange={(e) => setCreateForm((prev) => ({ ...prev, teamId: e.target.value ? Number(e.target.value) : '' }))}>
                 <option value="">اختر الفريق</option>
@@ -450,9 +480,16 @@ export default function Employees() {
                 <input 
                   type="number" 
                   className="input-field w-20 h-9 text-center text-sm" 
-                  placeholder="التارجت" 
+                  placeholder="مكالمات" 
                   value={bulkTarget} 
                   onChange={(e) => setBulkTarget(e.target.value === '' ? '' : Number(e.target.value))} 
+                />
+                <input 
+                  type="number" 
+                  className="input-field w-20 h-9 text-center text-sm" 
+                  placeholder="موافقات" 
+                  value={bulkApprovalTarget} 
+                  onChange={(e) => setBulkApprovalTarget(e.target.value === '' ? '' : Number(e.target.value))} 
                 />
                 <button 
                   onClick={handleBulkTargetUpdate}
@@ -492,7 +529,8 @@ export default function Employees() {
               <thead>
                 <tr className="text-right border-b border-slate-200">
                   <th className="py-3">الموظف</th>
-                  <th className="py-3">الهدف اليومي</th>
+                  <th className="py-3">هدف المكالمات</th>
+                  <th className="py-3">هدف الموافقات</th>
                   <th className="py-3">مكالمات اليوم</th>
                   <th className="py-3">النسبة</th>
                   <th className="py-3">الحالة</th>
@@ -519,6 +557,7 @@ export default function Employees() {
                           </p>
                         </td>
                         <td className="py-4 font-bold text-indigo-700">{employee.profile?.dailyCallTarget}</td>
+                        <td className="py-4 font-bold text-emerald-700">{employee.profile?.dailyApprovalTarget}</td>
                         <td className="py-4 font-bold text-amber-600">{employee.callsToday}</td>
                         <td className="py-4">
                           <div className="w-36 bg-slate-200 rounded-full h-2.5 overflow-hidden">
@@ -550,11 +589,12 @@ export default function Employees() {
                       </tr>
                       {isEditing && (
                         <tr className="border-b border-slate-100">
-                          <td colSpan={6} className="pb-4">
-                            <div className="p-4 mt-2 rounded-xl border border-slate-200 bg-slate-50 grid md:grid-cols-6 gap-2">
+                          <td colSpan={7} className="pb-4">
+                            <div className="p-4 mt-2 rounded-xl border border-slate-200 bg-slate-50 grid md:grid-cols-7 gap-2">
                               <input className="input-field" value={editForm.name} onChange={(e) => setEditForm((prev) => ({ ...prev, name: e.target.value }))} />
                               <input className="input-field" value={editForm.email} onChange={(e) => setEditForm((prev) => ({ ...prev, email: e.target.value }))} />
                               <input className="input-field" type="number" min={1} max={500} value={editForm.dailyCallTarget} onChange={(e) => setEditForm((prev) => ({ ...prev, dailyCallTarget: Number(e.target.value) }))} />
+                              <input className="input-field" type="number" min={0} max={200} value={editForm.dailyApprovalTarget} onChange={(e) => setEditForm((prev) => ({ ...prev, dailyApprovalTarget: Number(e.target.value) }))} />
                               <input className="input-field" value={editForm.department} onChange={(e) => setEditForm((prev) => ({ ...prev, department: e.target.value }))} />
                               <input className="input-field" value={editForm.jobTitle} onChange={(e) => setEditForm((prev) => ({ ...prev, jobTitle: e.target.value }))} />
                               <input className="input-field" value={editForm.phone} onChange={(e) => setEditForm((prev) => ({ ...prev, phone: e.target.value }))} />

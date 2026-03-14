@@ -456,6 +456,15 @@ const buildEmployeeProfilePayload = (input = {}, { strictTarget = false } = {}) 
     errors.push('dailyCallTarget is required');
   }
 
+  if (Object.prototype.hasOwnProperty.call(input, 'dailyApprovalTarget')) {
+    const target = parseInteger(input.dailyApprovalTarget);
+    if (target === null || target < 0 || target > 200) {
+      errors.push('dailyApprovalTarget must be an integer between 0 and 200');
+    } else {
+      payload.dailyApprovalTarget = target;
+    }
+  }
+
   return { payload, errors };
 };
 
@@ -647,28 +656,43 @@ async function startServer() {
       });
       if (!user || user.role !== 'SALES') return;
 
-      const target = user.employeeProfile?.dailyCallTarget || 30;
+      const callTarget = user.employeeProfile?.dailyCallTarget || 30;
+      const approvalTarget = user.employeeProfile?.dailyApprovalTarget || 0;
       const { start, end } = buildDayRange();
-      const count = await prisma.interaction.count({
-        where: {
-          userId,
-          type: { in: ['CALL', 'SEND'] },
-          date: { gte: start, lt: end },
-        },
-      });
+      const [callsCount, approvalsCount] = await Promise.all([
+        prisma.interaction.count({
+          where: {
+            userId,
+            type: { in: ['CALL', 'SEND'] },
+            date: { gte: start, lt: end },
+          },
+        }),
+        prisma.interaction.count({
+          where: {
+            userId,
+            type: { in: ['CALL', 'SEND'] },
+            outcome: 'AGREED',
+            date: { gte: start, lt: end },
+          },
+        }),
+      ]);
 
-      if (count === target) {
-        // Just reached the target! Notify the user and the team lead
+      const callsSatisfied = callsCount >= callTarget;
+      const approvalsSatisfied = approvalsCount >= approvalTarget;
+      const justReachedCalls = callsCount === callTarget;
+      const justReachedApprovals = approvalTarget > 0 && approvalsCount === approvalTarget;
+
+      if (callsSatisfied && approvalsSatisfied && (justReachedCalls || justReachedApprovals)) {
         await sendPushNotification(user.id, {
           title: 'عاش يا بطل! 🏆',
-          body: `خلصت التارجت بتاعك النهاردة. استمر!`,
+          body: `خلصت تارجت النهاردة (مكالمات: ${callsCount}/${callTarget}${approvalTarget > 0 ? ` • موافقات: ${approvalsCount}/${approvalTarget}` : ''}). استمر!`,
           icon: '/icon-192.png',
         });
 
         if (user.team?.leadId) {
           await sendPushNotification(user.team.leadId, {
             title: 'واحد من فريقك خلص! 🚀',
-            body: `الموظف ${user.name} خلص التارجت بتاعه النهاردة.`,
+            body: `الموظف ${user.name} خلص تارجته النهاردة (مكالمات: ${callsCount}/${callTarget}${approvalTarget > 0 ? ` • موافقات: ${approvalsCount}/${approvalTarget}` : ''}).`,
             icon: '/icon-192.png',
           });
         }
@@ -1001,7 +1025,7 @@ async function startServer() {
       const yesterdayRange = buildDayRangeWithOffset(-1);
       const result = await Promise.all(teams.map(async (team) => {
         const salesIds = team.users.filter((member) => member.role === 'SALES').map((member) => member.id);
-        const [agreed, hesitant, rejected, noAnswer, recontact, wrongNumber, poolCount, callsToday, callsYesterday, callsTodayRows] = await Promise.all([
+        const [agreed, hesitant, rejected, noAnswer, recontact, wrongNumber, poolCount, callsToday, callsYesterday, agreedToday, callsTodayRows, agreedTodayRows] = await Promise.all([
           prisma.lead.count({ where: { tenantId: actor.tenantId, teamId: team.id, source: { not: POOL_SOURCE }, status: 'AGREED' } }),
           prisma.lead.count({ where: { tenantId: actor.tenantId, teamId: team.id, source: { not: POOL_SOURCE }, status: 'HESITANT' } }),
           prisma.lead.count({ where: { tenantId: actor.tenantId, teamId: team.id, source: { not: POOL_SOURCE }, status: 'REJECTED' } }),
@@ -1023,6 +1047,14 @@ async function startServer() {
               lead: { tenantId: actor.tenantId, teamId: team.id },
             },
           }),
+          prisma.interaction.count({
+            where: {
+              type: { in: ['CALL', 'SEND'] },
+              outcome: 'AGREED',
+              date: { gte: start, lt: end },
+              lead: { tenantId: actor.tenantId, teamId: team.id },
+            },
+          }),
           salesIds.length
             ? prisma.interaction.findMany({
                 where: {
@@ -1033,12 +1065,29 @@ async function startServer() {
                 select: { userId: true },
               })
             : Promise.resolve([]),
+          salesIds.length
+            ? prisma.interaction.findMany({
+                where: {
+                  userId: { in: salesIds },
+                  type: { in: ['CALL', 'SEND'] },
+                  outcome: 'AGREED',
+                  date: { gte: start, lt: end },
+                },
+                select: { userId: true },
+              })
+            : Promise.resolve([]),
         ]);
         const salesMembers = team.users.filter((member) => member.role === 'SALES');
         const teamLeadMembers = team.users.filter((member) => member.role === 'TEAM_LEAD');
-        const totalTarget = salesMembers.reduce((sum, member) => sum + (member.employeeProfile?.dailyCallTarget || 0), 0);
+        const totalCallTarget = salesMembers.reduce((sum, member) => sum + (member.employeeProfile?.dailyCallTarget || 0), 0);
+        const totalApprovalTarget = salesMembers.reduce((sum, member) => sum + (member.employeeProfile?.dailyApprovalTarget || 0), 0);
         const nonPoolTotal = agreed + hesitant + rejected + noAnswer + recontact + wrongNumber;
         const memberCallsMap = callsTodayRows.reduce((acc, item) => {
+          if (!item.userId) return acc;
+          acc.set(item.userId, (acc.get(item.userId) || 0) + 1);
+          return acc;
+        }, new Map());
+        const memberAgreedMap = agreedTodayRows.reduce((acc, item) => {
           if (!item.userId) return acc;
           acc.set(item.userId, (acc.get(item.userId) || 0) + 1);
           return acc;
@@ -1046,10 +1095,15 @@ async function startServer() {
         const membersWithCalls = team.users.map((member) => ({
           ...member,
           callsToday: memberCallsMap.get(member.id) || 0,
+          agreedToday: memberAgreedMap.get(member.id) || 0,
         }));
-        const targetAchievementPercent = totalTarget > 0
-          ? Number(((callsToday / totalTarget) * 100).toFixed(2))
+        const callsAchievementPercent = totalCallTarget > 0
+          ? Number(((callsToday / totalCallTarget) * 100).toFixed(2))
           : 0;
+        const approvalsAchievementPercent = totalApprovalTarget > 0
+          ? Number(((agreedToday / totalApprovalTarget) * 100).toFixed(2))
+          : 100;
+        const targetAchievementPercent = Number(Math.min(callsAchievementPercent, approvalsAchievementPercent).toFixed(2));
 
         return {
           id: team.id,
@@ -1069,8 +1123,13 @@ async function startServer() {
             wrongNumber,
             callsToday,
             callsYesterday,
-            totalTarget,
+            agreedToday,
+            totalCallTarget,
+            totalApprovalTarget,
+            totalTarget: totalCallTarget,
             targetAchievementPercent,
+            callsAchievementPercent,
+            approvalsAchievementPercent,
           },
         };
       }));
@@ -2841,7 +2900,10 @@ async function startServer() {
       let poolCount = 0;
       let callsToday = 0;
       let callsYesterday = 0;
+      let approvalsToday = 0;
+      let approvalsYesterday = 0;
       let dailyCallTarget = null;
+      let dailyApprovalTarget = null;
       let teamMembersPerformance = [];
       let leaderboard = [];
 
@@ -2852,7 +2914,7 @@ async function startServer() {
           select: {
             id: true,
             name: true,
-            employeeProfile: { select: { dailyCallTarget: true } },
+            employeeProfile: { select: { dailyCallTarget: true, dailyApprovalTarget: true } },
           },
         });
         const tenantSalesIds = allTenantSales.map(m => m.id);
@@ -2894,6 +2956,7 @@ async function startServer() {
           callsToday: tCallsMap[m.id] || 0,
           agreedToday: tAgreedMap[m.id] || 0,
           dailyCallTarget: m.employeeProfile?.dailyCallTarget || 30,
+          dailyApprovalTarget: m.employeeProfile?.dailyApprovalTarget || 0,
         })).sort((a, b) => {
           // Priority 1: Calls Today (Descending)
           if (b.callsToday !== a.callsToday) return b.callsToday - a.callsToday;
@@ -2914,7 +2977,7 @@ async function startServer() {
           select: {
             id: true,
             name: true,
-            employeeProfile: { select: { dailyCallTarget: true, phone: true } },
+            employeeProfile: { select: { dailyCallTarget: true, dailyApprovalTarget: true, phone: true } },
           },
         });
         const fSalesIds = filteredSales.map(m => m.id);
@@ -2925,13 +2988,14 @@ async function startServer() {
             userId: m.id,
             name: m.name,
             dailyCallTarget: m.employeeProfile?.dailyCallTarget || 30,
+            dailyApprovalTarget: m.employeeProfile?.dailyApprovalTarget || 0,
             callsToday: stats?.callsToday || 0,
             agreedToday: stats?.agreedToday || 0,
             phone: m.employeeProfile?.phone || null,
           };
         }).sort((a, b) => {
-          const aDone = a.callsToday >= a.dailyCallTarget;
-          const bDone = b.callsToday >= b.dailyCallTarget;
+          const aDone = a.callsToday >= a.dailyCallTarget && a.agreedToday >= a.dailyApprovalTarget;
+          const bDone = b.callsToday >= b.dailyCallTarget && b.agreedToday >= b.dailyApprovalTarget;
           if (aDone && !bDone) return -1;
           if (!aDone && bDone) return 1;
           if (b.callsToday !== a.callsToday) return b.callsToday - a.callsToday;
@@ -2940,10 +3004,20 @@ async function startServer() {
       } else if (actor.role === 'SALES') {
         const profile = await ensureEmployeeProfile(req.user.id);
         dailyCallTarget = profile.dailyCallTarget;
+        dailyApprovalTarget = profile.dailyApprovalTarget || 0;
         callsToday = await prisma.interaction.count({
           where: {
             userId: req.user.id,
             type: { in: ['CALL', 'SEND'] },
+            date: { gte: start, lt: end },
+            lead: { tenantId: actor.tenantId },
+          },
+        });
+        approvalsToday = await prisma.interaction.count({
+          where: {
+            userId: req.user.id,
+            type: { in: ['CALL', 'SEND'] },
+            outcome: 'AGREED',
             date: { gte: start, lt: end },
             lead: { tenantId: actor.tenantId },
           },
@@ -2956,17 +3030,27 @@ async function startServer() {
             lead: { tenantId: actor.tenantId },
           },
         });
+        approvalsYesterday = await prisma.interaction.count({
+          where: {
+            userId: req.user.id,
+            type: { in: ['CALL', 'SEND'] },
+            outcome: 'AGREED',
+            date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
+            lead: { tenantId: actor.tenantId },
+          },
+        });
       } else if (actor.role === 'TEAM_LEAD') {
         const teamMembers = await prisma.user.findMany({
           where: { role: 'SALES', teamId: actor.teamId || -1, tenantId: actor.tenantId },
           select: {
             id: true,
             name: true,
-            employeeProfile: { select: { dailyCallTarget: true, phone: true } },
+            employeeProfile: { select: { dailyCallTarget: true, dailyApprovalTarget: true, phone: true } },
           },
         });
         const salesIds = teamMembers.map((member) => member.id);
         dailyCallTarget = teamMembers.reduce((sum, member) => sum + (member.employeeProfile?.dailyCallTarget || 30), 0);
+        dailyApprovalTarget = teamMembers.reduce((sum, member) => sum + (member.employeeProfile?.dailyApprovalTarget || 0), 0);
         
         teamMembersPerformance = teamMembers.map((m) => {
           const stats = leaderboard.find(l => l.userId === m.id);
@@ -2974,13 +3058,14 @@ async function startServer() {
             userId: m.id,
             name: m.name,
             dailyCallTarget: m.employeeProfile?.dailyCallTarget || 30,
+            dailyApprovalTarget: m.employeeProfile?.dailyApprovalTarget || 0,
             callsToday: stats?.callsToday || 0,
             agreedToday: stats?.agreedToday || 0,
             phone: m.employeeProfile?.phone || null,
           };
         }).sort((a, b) => {
-          const aDone = a.callsToday >= a.dailyCallTarget;
-          const bDone = b.callsToday >= b.dailyCallTarget;
+          const aDone = a.callsToday >= a.dailyCallTarget && a.agreedToday >= a.dailyApprovalTarget;
+          const bDone = b.callsToday >= b.dailyCallTarget && b.agreedToday >= b.dailyApprovalTarget;
           if (aDone && !bDone) return -1;
           if (!aDone && bDone) return 1;
           if (b.callsToday !== a.callsToday) return b.callsToday - a.callsToday;
@@ -2988,12 +3073,23 @@ async function startServer() {
         });
 
         callsToday = teamMembersPerformance.reduce((sum, m) => sum + m.callsToday, 0);
+        approvalsToday = teamMembersPerformance.reduce((sum, m) => sum + m.agreedToday, 0);
         
         callsYesterday = salesIds.length
           ? await prisma.interaction.count({
               where: {
                 userId: { in: salesIds },
                 type: { in: ['CALL', 'SEND'] },
+                date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
+              },
+            })
+          : 0;
+        approvalsYesterday = salesIds.length
+          ? await prisma.interaction.count({
+              where: {
+                userId: { in: salesIds },
+                type: { in: ['CALL', 'SEND'] },
+                outcome: 'AGREED',
                 date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
               },
             })
@@ -3010,10 +3106,17 @@ async function startServer() {
       const safePoolCount = safeCount(poolCount);
       const safeCallsToday = safeCount(callsToday);
       const safeCallsYesterday = safeCount(callsYesterday);
+      const safeApprovalsToday = safeCount(approvalsToday);
+      const safeApprovalsYesterday = safeCount(approvalsYesterday);
       const safeDailyCallTarget = Number.isFinite(dailyCallTarget) && dailyCallTarget > 0 ? dailyCallTarget : null;
-      const completionRate = safeDailyCallTarget
+      const safeDailyApprovalTarget = Number.isFinite(dailyApprovalTarget) && dailyApprovalTarget >= 0 ? dailyApprovalTarget : null;
+      const callsCompletionRate = safeDailyCallTarget
         ? Math.min(100, Number(((safeCallsToday / safeDailyCallTarget) * 100).toFixed(2)))
         : null;
+      const approvalsCompletionRate = safeDailyApprovalTarget !== null && safeDailyApprovalTarget > 0
+        ? Math.min(100, Number(((safeApprovalsToday / safeDailyApprovalTarget) * 100).toFixed(2)))
+        : 100;
+      const completionRate = callsCompletionRate === null ? null : Math.min(callsCompletionRate, approvalsCompletionRate);
 
       res.json({
         total: safeTotal,
@@ -3027,6 +3130,9 @@ async function startServer() {
         callsToday: safeCallsToday,
         callsYesterday: safeCallsYesterday,
         dailyCallTarget: safeDailyCallTarget,
+        approvalsToday: safeApprovalsToday,
+        approvalsYesterday: safeApprovalsYesterday,
+        dailyApprovalTarget: safeDailyApprovalTarget,
         byStatus: {
           AGREED: safeAgreed,
           HESITANT: safeHesitant,
@@ -3040,6 +3146,12 @@ async function startServer() {
           callsYesterday: safeCallsYesterday,
           dailyCallTarget: safeDailyCallTarget,
           remainingCalls: safeDailyCallTarget ? Math.max(0, safeDailyCallTarget - safeCallsToday) : null,
+          approvalsToday: safeApprovalsToday,
+          approvalsYesterday: safeApprovalsYesterday,
+          dailyApprovalTarget: safeDailyApprovalTarget,
+          remainingApprovals: safeDailyApprovalTarget !== null ? Math.max(0, safeDailyApprovalTarget - safeApprovalsToday) : null,
+          callsCompletionRate,
+          approvalsCompletionRate,
           completionRate,
         },
         teamMembersPerformance: (actor.role === 'ADMIN' || actor.role === 'TEAM_LEAD') ? teamMembersPerformance : [],
@@ -3132,10 +3244,24 @@ async function startServer() {
   // PUT /api/admin/teams/:id/update-target (Admin + Team Lead)
   app.put('/api/admin/teams/:id/update-target', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
     const teamIdParam = req.params.id;
-    const { target } = req.body;
+    const callTarget = Object.prototype.hasOwnProperty.call(req.body, 'dailyCallTarget')
+      ? parseInteger(req.body.dailyCallTarget)
+      : parseInteger(req.body.target);
+    const approvalTarget = Object.prototype.hasOwnProperty.call(req.body, 'dailyApprovalTarget')
+      ? parseInteger(req.body.dailyApprovalTarget)
+      : parseInteger(req.body.approvalsTarget);
 
-    if (!Number.isInteger(target) || target < 1) {
-      return res.status(400).json({ error: 'Invalid target value' });
+    const hasCallTarget = callTarget !== null && typeof callTarget !== 'undefined';
+    const hasApprovalTarget = approvalTarget !== null && typeof approvalTarget !== 'undefined';
+
+    if (!hasCallTarget && !hasApprovalTarget) {
+      return res.status(400).json({ error: 'dailyCallTarget or dailyApprovalTarget is required' });
+    }
+    if (hasCallTarget && (!Number.isInteger(callTarget) || callTarget < 1 || callTarget > 500)) {
+      return res.status(400).json({ error: 'Invalid dailyCallTarget value' });
+    }
+    if (hasApprovalTarget && (!Number.isInteger(approvalTarget) || approvalTarget < 0 || approvalTarget > 200)) {
+      return res.status(400).json({ error: 'Invalid dailyApprovalTarget value' });
     }
 
     try {
@@ -3166,10 +3292,14 @@ async function startServer() {
         for (const userId of userIds) {
           await prisma.employeeProfile.upsert({
             where: { userId },
-            update: { dailyCallTarget: target },
+            update: {
+              ...(hasCallTarget ? { dailyCallTarget: callTarget } : {}),
+              ...(hasApprovalTarget ? { dailyApprovalTarget: approvalTarget } : {}),
+            },
             create: {
               userId,
-              dailyCallTarget: target,
+              ...(hasCallTarget ? { dailyCallTarget: callTarget } : {}),
+              ...(hasApprovalTarget ? { dailyApprovalTarget: approvalTarget } : {}),
               department: 'Sales',
               isActive: true,
               timezone: 'Africa/Cairo',
@@ -3190,7 +3320,7 @@ async function startServer() {
     const employeeId = parseInteger(req.params.id);
     if (employeeId === null) return res.status(400).json({ error: 'Invalid employee id' });
 
-    const { name, email, dailyCallTarget, department, jobTitle, phone, isActive, role } = req.body;
+    const { name, email, dailyCallTarget, dailyApprovalTarget, department, jobTitle, phone, isActive, role } = req.body;
 
     try {
       const actor = await getCurrentUserScope(req.user.id);
@@ -3203,13 +3333,41 @@ async function startServer() {
       if (actor.role === 'TEAM_LEAD' && targetUser.teamId !== actor.teamId) {
         return res.status(403).json({ error: 'Access denied' });
       }
+      if (actor.role === 'TEAM_LEAD' && targetUser.role !== 'SALES') {
+        return res.status(403).json({ error: 'You can only update sales members' });
+      }
+
+      const hasName = Object.prototype.hasOwnProperty.call(req.body, 'name');
+      const hasEmail = Object.prototype.hasOwnProperty.call(req.body, 'email');
+      const normalizedName = hasName ? normalizeNullableString(name, 120) : null;
+      const normalizedEmail = hasEmail && typeof email === 'string' ? email.trim().toLowerCase() : null;
+      if (hasName && !normalizedName) {
+        return res.status(400).json({ error: 'Name is required' });
+      }
+      if (hasEmail && (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail))) {
+        return res.status(400).json({ error: 'Valid email is required' });
+      }
+
+      const profileInput = {};
+      if (Object.prototype.hasOwnProperty.call(req.body, 'dailyCallTarget')) profileInput.dailyCallTarget = dailyCallTarget;
+      if (Object.prototype.hasOwnProperty.call(req.body, 'dailyApprovalTarget')) profileInput.dailyApprovalTarget = dailyApprovalTarget;
+      if (Object.prototype.hasOwnProperty.call(req.body, 'department')) profileInput.department = department;
+      if (Object.prototype.hasOwnProperty.call(req.body, 'jobTitle')) profileInput.jobTitle = jobTitle;
+      if (Object.prototype.hasOwnProperty.call(req.body, 'phone')) profileInput.phone = phone;
+      if (Object.prototype.hasOwnProperty.call(req.body, 'timezone')) profileInput.timezone = req.body.timezone;
+      if (Object.prototype.hasOwnProperty.call(req.body, 'isActive')) profileInput.isActive = isActive;
+
+      const { payload: profilePayload, errors: profileErrors } = buildEmployeeProfilePayload(profileInput, { strictTarget: false });
+      if (profileErrors.length) {
+        return res.status(400).json({ error: profileErrors[0] });
+      }
 
       // Update User details (including name)
       const updatedUser = await prisma.user.update({
         where: { id: employeeId },
         data: {
-          ...(name && { name: name.trim() }),
-          ...(email && { email: email.trim().toLowerCase() }),
+          ...(hasName ? { name: normalizedName } : {}),
+          ...(hasEmail ? { email: normalizedEmail } : {}),
           ...(role && actor.role === 'ADMIN' && { role }), // Only admin can change role
         }
       });
@@ -3217,21 +3375,15 @@ async function startServer() {
       // Update or Create Profile
       const updatedProfile = await prisma.employeeProfile.upsert({
         where: { userId: employeeId },
-        update: {
-          ...(dailyCallTarget !== undefined && { dailyCallTarget }),
-          ...(department && { department }),
-          ...(jobTitle !== undefined && { jobTitle }),
-          ...(phone !== undefined && { phone }),
-          ...(isActive !== undefined && { isActive }),
-        },
+        update: profilePayload,
         create: {
           userId: employeeId,
-          dailyCallTarget: dailyCallTarget || 30,
-          department: department || 'Sales',
-          jobTitle: jobTitle || null,
-          phone: phone || null,
-          isActive: isActive !== undefined ? isActive : true,
           timezone: 'Africa/Cairo',
+          dailyCallTarget: 30,
+          dailyApprovalTarget: 0,
+          department: 'Sales',
+          isActive: true,
+          ...profilePayload,
         }
       });
 
@@ -3338,6 +3490,7 @@ async function startServer() {
           phone: null,
           timezone: 'Africa/Cairo',
           dailyCallTarget: 30,
+          dailyApprovalTarget: 0,
           isActive: true,
         },
         callsToday: 0,
@@ -3431,6 +3584,7 @@ async function startServer() {
           phone: user.employeeProfile?.phone || null,
           timezone: user.employeeProfile?.timezone || 'Africa/Cairo',
           dailyCallTarget: Number(user.employeeProfile?.dailyCallTarget || 30),
+          dailyApprovalTarget: Number(user.employeeProfile?.dailyApprovalTarget || 0),
           isActive: typeof user.employeeProfile?.isActive === 'boolean' ? user.employeeProfile.isActive : true,
         },
         callsToday: callsTodayMap.get(user.id) || 0,
@@ -3550,9 +3704,14 @@ async function startServer() {
       });
       const series = [...seriesMap.values()];
       const totalCalls = series.reduce((sum, row) => sum + row.calls, 0);
-      const target = employee.employeeProfile?.dailyCallTarget || 0;
-      const totalTarget = target * days;
-      const completionRate = totalTarget > 0 ? Number(((totalCalls / totalTarget) * 100).toFixed(2)) : 0;
+      const totalAgreed = series.reduce((sum, row) => sum + row.agreed, 0);
+      const callTarget = employee.employeeProfile?.dailyCallTarget || 0;
+      const approvalTarget = employee.employeeProfile?.dailyApprovalTarget || 0;
+      const totalCallTarget = callTarget * days;
+      const totalApprovalTarget = approvalTarget * days;
+      const callsCompletionRate = totalCallTarget > 0 ? Number(((totalCalls / totalCallTarget) * 100).toFixed(2)) : 0;
+      const approvalsCompletionRate = totalApprovalTarget > 0 ? Number(((totalAgreed / totalApprovalTarget) * 100).toFixed(2)) : 100;
+      const completionRate = Number(Math.min(callsCompletionRate, approvalsCompletionRate).toFixed(2));
       return res.json({
         employee: {
           id: employee.id,
@@ -3560,16 +3719,21 @@ async function startServer() {
           email: employee.email,
           team: employee.team,
           isActive: employee.employeeProfile?.isActive ?? true,
-          dailyCallTarget: target,
+          dailyCallTarget: callTarget,
+          dailyApprovalTarget: approvalTarget,
         },
         periodDays: days,
         totals: {
           calls: totalCalls,
-          agreed: series.reduce((sum, row) => sum + row.agreed, 0),
+          agreed: totalAgreed,
           rejected: series.reduce((sum, row) => sum + row.rejected, 0),
           hesitant: series.reduce((sum, row) => sum + row.hesitant, 0),
           wrongNumber: series.reduce((sum, row) => sum + row.wrongNumber, 0),
-          target: totalTarget,
+          callTarget: totalCallTarget,
+          approvalTarget: totalApprovalTarget,
+          target: totalCallTarget,
+          callsCompletionRate,
+          approvalsCompletionRate,
           completionRate,
         },
         series,
@@ -3596,12 +3760,13 @@ async function startServer() {
         include: { team: { select: { name: true } }, employeeProfile: true },
         orderBy: { name: 'asc' },
       });
-      const header = ['name', 'email', 'team', 'dailyCallTarget', 'department', 'jobTitle', 'phone'];
+      const header = ['name', 'email', 'team', 'dailyCallTarget', 'dailyApprovalTarget', 'department', 'jobTitle', 'phone'];
       const rows = users.map((user) => [
         user.name,
         user.email,
         user.team?.name || '',
         String(user.employeeProfile?.dailyCallTarget || 0),
+        String(user.employeeProfile?.dailyApprovalTarget || 0),
         user.employeeProfile?.department || '',
         user.employeeProfile?.jobTitle || '',
         user.employeeProfile?.phone || '',
@@ -3876,19 +4041,36 @@ async function startServer() {
       });
 
       for (const user of salesUsers) {
-        const target = user.employeeProfile?.dailyCallTarget || 30;
-        const callsCount = await prisma.interaction.count({
-          where: {
-            userId: user.id,
-            type: { in: ['CALL', 'SEND'] },
-            date: { gte: start, lt: end },
-          },
-        });
+        const callTarget = user.employeeProfile?.dailyCallTarget || 30;
+        const approvalTarget = user.employeeProfile?.dailyApprovalTarget || 0;
+        const [callsCount, approvalsCount] = await Promise.all([
+          prisma.interaction.count({
+            where: {
+              userId: user.id,
+              type: { in: ['CALL', 'SEND'] },
+              date: { gte: start, lt: end },
+            },
+          }),
+          prisma.interaction.count({
+            where: {
+              userId: user.id,
+              type: { in: ['CALL', 'SEND'] },
+              outcome: 'AGREED',
+              date: { gte: start, lt: end },
+            },
+          }),
+        ]);
 
-        if (callsCount < target) {
+        const remainingCalls = Math.max(0, callTarget - callsCount);
+        const remainingApprovals = Math.max(0, approvalTarget - approvalsCount);
+
+        if (remainingCalls > 0 || remainingApprovals > 0) {
+          const parts = [];
+          if (remainingCalls > 0) parts.push(`${remainingCalls} مكالمة`);
+          if (remainingApprovals > 0) parts.push(`${remainingApprovals} موافقة`);
           await sendPushNotification(user.id, {
             title: 'تذكير بالهدف اليومي 🎯',
-            body: `فاضلك ${target - callsCount} مكالمة عشان تخلص التارجت بتاعك النهاردة. شد حيلك!`,
+            body: `فاضلك ${parts.join(' و ')} عشان تخلص التارجت بتاعك النهاردة. شد حيلك!`,
             icon: '/icon-192.png',
           });
         }
@@ -3920,16 +4102,28 @@ async function startServer() {
         const missedNames = [];
 
         for (const member of teamMembers) {
-          const target = member.employeeProfile?.dailyCallTarget || 30;
-          const count = await prisma.interaction.count({
-            where: {
-              userId: member.id,
-              type: { in: ['CALL', 'SEND'] },
-              date: { gte: start, lt: end },
-            },
-          });
+          const callTarget = member.employeeProfile?.dailyCallTarget || 30;
+          const approvalTarget = member.employeeProfile?.dailyApprovalTarget || 0;
+          const [callsCount, approvalsCount] = await Promise.all([
+            prisma.interaction.count({
+              where: {
+                userId: member.id,
+                type: { in: ['CALL', 'SEND'] },
+                date: { gte: start, lt: end },
+              },
+            }),
+            prisma.interaction.count({
+              where: {
+                userId: member.id,
+                type: { in: ['CALL', 'SEND'] },
+                outcome: 'AGREED',
+                date: { gte: start, lt: end },
+              },
+            }),
+          ]);
 
-          if (count >= target) achieved++;
+          const done = callsCount >= callTarget && approvalsCount >= approvalTarget;
+          if (done) achieved++;
           else {
             missed++;
             missedNames.push(member.name);

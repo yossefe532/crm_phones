@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, CheckCircle2, Crown, KeyRound, Loader2, Trash2, UserPlus } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Crown, KeyRound, Loader2, PencilLine, Trash2, UserPlus } from 'lucide-react';
 import api from '../../services/api';
 import { useAuth } from '../../store/useAuth';
 
 interface TeamMemberProfile {
   dailyCallTarget?: number;
+  dailyApprovalTarget?: number;
   department?: string;
   isActive?: boolean;
 }
@@ -17,6 +18,7 @@ interface TeamMember {
   role: 'TEAM_LEAD' | 'SALES';
   teamId: number;
   callsToday?: number;
+  agreedToday?: number;
   employeeProfile?: TeamMemberProfile | null;
 }
 
@@ -34,8 +36,13 @@ interface TeamStats {
   wrongNumber: number;
   callsToday: number;
   callsYesterday: number;
+  agreedToday?: number;
+  totalCallTarget?: number;
+  totalApprovalTarget?: number;
   totalTarget: number;
   targetAchievementPercent: number;
+  callsAchievementPercent?: number;
+  approvalsAchievementPercent?: number;
 }
 
 interface TeamBlock {
@@ -72,6 +79,7 @@ export default function TeamManagement() {
     role: 'SALES' as 'SALES' | 'TEAM_LEAD',
     teamId: '' as number | '',
     dailyCallTarget: 30,
+    dailyApprovalTarget: 0,
     department: 'Sales',
   });
 
@@ -134,6 +142,7 @@ export default function TeamManagement() {
         teamId: isAdmin ? form.teamId : undefined,
         employeeProfile: {
           dailyCallTarget: form.dailyCallTarget,
+          dailyApprovalTarget: form.dailyApprovalTarget,
           department: form.department.trim() || 'Sales',
           isActive: true,
         },
@@ -146,6 +155,7 @@ export default function TeamManagement() {
         password: '',
         role: 'SALES',
         dailyCallTarget: 30,
+        dailyApprovalTarget: 0,
         department: 'Sales',
       }));
       await fetchTeams();
@@ -222,6 +232,68 @@ export default function TeamManagement() {
     }
   };
 
+  const updateTeamTargets = async (team: TeamBlock) => {
+    resetAlerts();
+    const callTargetRaw = window.prompt('اكتب هدف المكالمات اليومي للفريق (1 - 500)');
+    if (callTargetRaw === null) return;
+    const approvalTargetRaw = window.prompt('اكتب هدف الموافقات اليومي للفريق (0 - 200)');
+    if (approvalTargetRaw === null) return;
+    const callTarget = Number(callTargetRaw);
+    const approvalTarget = Number(approvalTargetRaw);
+    if (!Number.isInteger(callTarget) || callTarget < 1 || callTarget > 500) {
+      setError('هدف المكالمات يجب أن يكون رقمًا صحيحًا بين 1 و 500');
+      return;
+    }
+    if (!Number.isInteger(approvalTarget) || approvalTarget < 0 || approvalTarget > 200) {
+      setError('هدف الموافقات يجب أن يكون رقمًا صحيحًا بين 0 و 200');
+      return;
+    }
+    setSaving(true);
+    try {
+      const response = await api.put(`/admin/teams/${team.id}/update-target`, {
+        dailyCallTarget: callTarget,
+        dailyApprovalTarget: approvalTarget,
+      });
+      setSuccess(response.data?.message || 'تم تحديث تارجت الفريق');
+      await fetchTeams();
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'تعذر تحديث تارجت الفريق');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateMemberTargets = async (member: TeamMember) => {
+    resetAlerts();
+    const callTargetRaw = window.prompt(`هدف المكالمات اليومي لـ ${member.name} (1 - 500)`, String(member.employeeProfile?.dailyCallTarget ?? 30));
+    if (callTargetRaw === null) return;
+    const approvalTargetRaw = window.prompt(`هدف الموافقات اليومي لـ ${member.name} (0 - 200)`, String(member.employeeProfile?.dailyApprovalTarget ?? 0));
+    if (approvalTargetRaw === null) return;
+    const callTarget = Number(callTargetRaw);
+    const approvalTarget = Number(approvalTargetRaw);
+    if (!Number.isInteger(callTarget) || callTarget < 1 || callTarget > 500) {
+      setError('هدف المكالمات يجب أن يكون رقمًا صحيحًا بين 1 و 500');
+      return;
+    }
+    if (!Number.isInteger(approvalTarget) || approvalTarget < 0 || approvalTarget > 200) {
+      setError('هدف الموافقات يجب أن يكون رقمًا صحيحًا بين 0 و 200');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.put(`/admin/employees/${member.id}/profile`, {
+        dailyCallTarget: callTarget,
+        dailyApprovalTarget: approvalTarget,
+      });
+      setSuccess(`تم تحديث تارجت ${member.name}`);
+      await fetchTeams();
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'تعذر تحديث تارجت العضو');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -269,7 +341,8 @@ export default function TeamManagement() {
           ) : (
             <div className="input-field flex items-center">{teams[0]?.name || 'فريقي'}</div>
           )}
-          <input className="input-field" type="number" min={1} max={500} placeholder="الهدف اليومي" value={form.dailyCallTarget} onChange={(e) => setForm((prev) => ({ ...prev, dailyCallTarget: Number(e.target.value) || 30 }))} />
+          <input className="input-field" type="number" min={1} max={500} placeholder="هدف المكالمات" value={form.dailyCallTarget} onChange={(e) => setForm((prev) => ({ ...prev, dailyCallTarget: Number(e.target.value) || 30 }))} />
+          <input className="input-field" type="number" min={0} max={200} placeholder="هدف الموافقات" value={form.dailyApprovalTarget} onChange={(e) => setForm((prev) => ({ ...prev, dailyApprovalTarget: Number(e.target.value) || 0 }))} />
           <input className="input-field" placeholder="القسم" value={form.department} onChange={(e) => setForm((prev) => ({ ...prev, department: e.target.value }))} />
         </div>
         <button className="btn-primary inline-flex items-center gap-2" onClick={addMember} disabled={saving || !canCreate}>
@@ -293,28 +366,40 @@ export default function TeamManagement() {
                 </p>
               </div>
               <div className="text-sm text-slate-600">
-                ليدز: {team.stats.totalLeads} • Pool: {team.stats.poolCount} • اليوم: {team.stats.callsToday} • أمس: {team.stats.callsYesterday}
+                ليدز: {team.stats.totalLeads} • Pool: {team.stats.poolCount} • مكالمات اليوم: {team.stats.callsToday} • موافقات اليوم: {team.stats.agreedToday ?? 0}
               </div>
-              {isAdmin && (
+              <div className="flex items-center gap-2">
                 <button
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-red-100 text-red-700 text-xs font-bold disabled:opacity-50"
-                  onClick={() => deleteTeam(team)}
-                  disabled={deletingTeamId === team.id}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 text-slate-700 text-xs font-bold disabled:opacity-50"
+                  onClick={() => updateTeamTargets(team)}
+                  disabled={saving}
                 >
-                  {deletingTeamId === team.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                  حذف الفريق بالكامل
+                  {saving ? <Loader2 size={14} className="animate-spin" /> : <PencilLine size={14} />}
+                  تارجت الفريق
                 </button>
-              )}
+                {isAdmin && (
+                  <button
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-red-100 text-red-700 text-xs font-bold disabled:opacity-50"
+                    onClick={() => deleteTeam(team)}
+                    disabled={deletingTeamId === team.id}
+                  >
+                    {deletingTeamId === team.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                    حذف الفريق بالكامل
+                  </button>
+                )}
+              </div>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-8 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-10 gap-3">
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">وافقوا</p><p className="font-bold">{team.stats.agreed}</p></div>
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">مترددين</p><p className="font-bold">{team.stats.hesitant}</p></div>
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">رفضوا</p><p className="font-bold">{team.stats.rejected}</p></div>
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">مردوش</p><p className="font-bold">{team.stats.noAnswer}</p></div>
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">إعادة تواصل</p><p className="font-bold">{team.stats.recontact}</p></div>
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">رقم خاطئ</p><p className="font-bold">{team.stats.wrongNumber}</p></div>
-              <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">هدف اليوم</p><p className="font-bold">{team.stats.totalTarget}</p></div>
+              <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">هدف المكالمات</p><p className="font-bold">{team.stats.totalCallTarget ?? team.stats.totalTarget}</p></div>
+              <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">هدف الموافقات</p><p className="font-bold">{team.stats.totalApprovalTarget ?? 0}</p></div>
+              <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">إنجاز المكالمات</p><p className="font-bold">{Math.round(team.stats.callsAchievementPercent ?? team.stats.targetAchievementPercent)}%</p></div>
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">تحقيق الهدف</p><p className="font-bold">{team.stats.targetAchievementPercent}%</p></div>
             </div>
 
@@ -324,14 +409,25 @@ export default function TeamManagement() {
                   <tr className="text-right border-b border-slate-200">
                     <th className="py-3">العضو</th>
                     <th className="py-3">الدور</th>
-                    <th className="py-3">الهدف اليومي</th>
+                    <th className="py-3">هدف المكالمات</th>
+                    <th className="py-3">هدف الموافقات</th>
                     <th className="py-3">مكالمات اليوم</th>
+                    <th className="py-3">موافقات اليوم</th>
                     <th className="py-3">الحالة</th>
                     <th className="py-3">إجراءات</th>
                   </tr>
                 </thead>
                 <tbody>
                   {team.members.map((member) => (
+                    (() => {
+                      const callTarget = member.employeeProfile?.dailyCallTarget ?? 0;
+                      const approvalTarget = member.employeeProfile?.dailyApprovalTarget ?? 0;
+                      const calls = member.callsToday ?? 0;
+                      const approvals = member.agreedToday ?? 0;
+                      const done = member.employeeProfile?.isActive === false
+                        ? false
+                        : calls >= callTarget && approvals >= approvalTarget;
+                      return (
                     <tr key={member.id} className="border-b border-slate-100">
                       <td className="py-3">
                         <p className="font-bold text-slate-800">{member.name}</p>
@@ -342,15 +438,27 @@ export default function TeamManagement() {
                           {member.role === 'TEAM_LEAD' ? 'Team Lead' : 'Sales'}
                         </span>
                       </td>
-                      <td className="py-3">{member.employeeProfile?.dailyCallTarget || '-'}</td>
-                      <td className="py-3 font-semibold">{member.callsToday ?? 0}</td>
+                      <td className="py-3">{member.employeeProfile?.dailyCallTarget ?? '-'}</td>
+                      <td className="py-3">{member.employeeProfile?.dailyApprovalTarget ?? '-'}</td>
+                      <td className="py-3 font-semibold">{calls}</td>
+                      <td className="py-3 font-semibold">{approvals}</td>
                       <td className="py-3">
                         <span className={`px-2 py-1 rounded-full text-xs ${member.employeeProfile?.isActive === false ? 'bg-slate-200 text-slate-600' : 'bg-emerald-100 text-emerald-700'}`}>
-                          {member.employeeProfile?.isActive === false ? 'موقوف' : 'نشط'}
+                          {member.employeeProfile?.isActive === false ? 'موقوف' : done ? 'محقق الهدف' : 'نشط'}
                         </span>
                       </td>
                       <td className="py-3">
                         <div className="flex items-center gap-2">
+                          {(isAdmin || user?.role === 'TEAM_LEAD') && member.role === 'SALES' && (
+                            <button
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-100 text-indigo-700 text-xs disabled:opacity-50"
+                              onClick={() => updateMemberTargets(member)}
+                              disabled={saving}
+                            >
+                              {saving ? <Loader2 size={14} className="animate-spin" /> : <PencilLine size={14} />}
+                              تارجت
+                            </button>
+                          )}
                           {(isAdmin || member.role === 'SALES') && (
                             <button
                               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-sky-100 text-sky-700 text-xs disabled:opacity-50"
@@ -399,6 +507,8 @@ export default function TeamManagement() {
                         </div>
                       </td>
                     </tr>
+                      );
+                    })()
                   ))}
                 </tbody>
               </table>
