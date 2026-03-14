@@ -3504,8 +3504,8 @@ async function startServer() {
 
   // GET /api/me/employee-profile
   app.get('/api/me/employee-profile', authenticateToken, async (req, res) => {
-    if (req.user.role !== 'SALES') {
-      return res.status(403).json({ error: 'Employee profile is available for sales agents only' });
+    if (req.user.role !== 'SALES' && req.user.role !== 'TEAM_LEAD') {
+      return res.status(403).json({ error: 'Employee profile is available for sales agents and team leads only' });
     }
     try {
       const profile = await ensureEmployeeProfile(req.user.id);
