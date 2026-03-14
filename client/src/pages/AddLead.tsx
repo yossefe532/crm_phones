@@ -73,7 +73,6 @@ export default function AddLead() {
   const [templates, setTemplates] = useState<StatusTemplate[]>([]);
   const [messageDraft, setMessageDraft] = useState('');
   const [isEditingMessage, setIsEditingMessage] = useState(false);
-  const [includeMaterial, setIncludeMaterial] = useState(false);
   const [includeOfficialVideo, setIncludeOfficialVideo] = useState(false);
   const [assistantTab, setAssistantTab] = useState<'TRAINING' | 'SCRIPT'>('SCRIPT');
   const [trainingTopic, setTrainingTopic] = useState('');
@@ -195,19 +194,14 @@ export default function AddLead() {
     setError('');
     const selectedTemplate = templates.find((t) => t.status === data.status);
     const whatsappTarget = data.whatsappPhone || data.phone;
-    const materialGalleryUrl = 'https://postimg.cc/gallery/QsVwM6J';
     const officialVideoUrl = 'https://www.facebook.com/share/r/1CdjpkHzKx/';
     const outgoingMessage = [
       messageDraft.trim(),
-      includeMaterial ? 'الماتريال: (مرفق صور)' : '',
       includeOfficialVideo ? `الفيديو الرسمي:\n${officialVideoUrl}` : '',
     ].filter(Boolean).join('\n\n');
     const shouldAutoSend =
       data.status !== 'NEW' && AUTO_MESSAGE_STATUSES.has(data.status) && !!outgoingMessage.trim();
     const waWindow = shouldAutoSend ? window.open('about:blank', '_blank') : null;
-    const materialWindow = shouldAutoSend && includeMaterial
-      ? window.open('about:blank', '_blank', 'noopener,noreferrer')
-      : null;
     try {
       console.log('Submitting lead data:', { ...data, claimedLeadId, recontactLeadId });
       if (claimedLeadId) {
@@ -231,16 +225,11 @@ export default function AddLead() {
           } else {
             window.location.href = whatsappUrl;
           }
-          if (includeMaterial && materialWindow && !materialWindow.closed) {
-            materialWindow.location.replace(materialGalleryUrl);
-          }
         } else {
           waWindow?.close();
-          materialWindow?.close();
         }
       } else {
         waWindow?.close();
-        materialWindow?.close();
       }
 
       if (claimedLeadId && data.status === 'NEW') {
@@ -285,14 +274,25 @@ export default function AddLead() {
     setMessageDraft(previewMessage);
     setIsEditingMessage(false);
   }, [previewMessage]);
-  const outgoingPreview = useMemo(() => {
+
+  const handleSendMaterial = () => {
     const materialUrl = 'https://postimg.cc/gallery/QsVwM6J';
+    const whatsappTarget = currentWhatsappPhone || currentPhone;
+    const whatsappNumber = toWhatsAppNumber(whatsappTarget || '');
+    const base = messageDraft.trim();
+    if (!whatsappNumber || !base) return;
+    const outgoing = `${base}\n\nالماتريال (صور):\n${materialUrl}`;
+    const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(outgoing)}`;
+    window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  const outgoingPreview = useMemo(() => {
+    const officialVideoUrl = 'https://www.facebook.com/share/r/1CdjpkHzKx/';
     return [
       messageDraft.trim(),
-      includeMaterial ? `الماتريال (صور):\n${materialUrl}` : '',
-      includeMaterial ? 'الماتريال: (مرفق صور)' : '',
+      includeOfficialVideo ? `الفيديو الرسمي:\n${officialVideoUrl}` : '',
     ].filter(Boolean).join('\n\n');
-  }, [includeMaterial, includeOfficialVideo, messageDraft]);
+  }, [includeOfficialVideo, messageDraft]);
 
 
   useEffect(() => {
@@ -518,24 +518,15 @@ export default function AddLead() {
             ))}
           </div>
           <div className="flex flex-wrap gap-3">
-            <label
-              className={clsx(
-                "cursor-pointer select-none px-5 py-3 rounded-2xl font-black flex items-center gap-3 transition-all border-2",
-                includeMaterial ? "border-indigo-500 bg-indigo-100 text-indigo-800" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700",
-              )}
+            <button
+              type="button"
+              onClick={handleSendMaterial}
+              disabled={!messageDraft.trim() || !(currentWhatsappPhone || currentPhone)}
+              className="px-5 py-3 rounded-2xl font-black flex items-center gap-3 transition-all border-2 border-indigo-500 bg-indigo-100 text-indigo-800 hover:bg-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <input
-                type="checkbox"
-                className="hidden"
-                checked={includeMaterial}
-                onChange={(e) => setIncludeMaterial(e.target.checked)}
-              />
-              <span className={clsx("w-6 h-6 rounded-lg flex items-center justify-center border-2", includeMaterial ? "bg-indigo-600 border-indigo-600 text-white" : "border-slate-300")}>
-                {includeMaterial ? <Check size={18} /> : null}
-              </span>
               <Image size={20} />
               <span>ارسال الماتريال</span>
-            </label>
+            </button>
 
             <label
               className={clsx(
