@@ -75,6 +75,8 @@ export default function AddLead() {
   const [isEditingMessage, setIsEditingMessage] = useState(false);
   const [includeMaterial, setIncludeMaterial] = useState(false);
   const [includeOfficialVideo, setIncludeOfficialVideo] = useState(false);
+  const [materialImageUrl1, setMaterialImageUrl1] = useState('');
+  const [materialImageUrl2, setMaterialImageUrl2] = useState('');
   const [assistantTab, setAssistantTab] = useState<'TRAINING' | 'SCRIPT'>('SCRIPT');
   const [trainingTopic, setTrainingTopic] = useState('');
   const [trainingContext, setTrainingContext] = useState('');
@@ -90,6 +92,33 @@ export default function AddLead() {
   const [goals, setGoals] = useState('');
   const [nameDetectedHint, setNameDetectedHint] = useState('');
   const finalizedRef = useRef(false);
+
+  useEffect(() => {
+    const v1 = localStorage.getItem('crm:materialImageUrl1') || '';
+    const v2 = localStorage.getItem('crm:materialImageUrl2') || '';
+    setMaterialImageUrl1(v1);
+    setMaterialImageUrl2(v2);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('crm:materialImageUrl1', materialImageUrl1);
+  }, [materialImageUrl1]);
+
+  useEffect(() => {
+    localStorage.setItem('crm:materialImageUrl2', materialImageUrl2);
+  }, [materialImageUrl2]);
+
+  const normalizeHttpsUrl = (value: string) => {
+    const v = String(value || '').trim();
+    if (!v) return '';
+    if (!v.startsWith('https://')) return '';
+    try {
+      const u = new URL(v);
+      return u.href;
+    } catch {
+      return '';
+    }
+  };
 
   const { register, handleSubmit, formState: { errors }, setValue, watch } = useForm<LeadForm>({
     resolver: zodResolver(leadSchema),
@@ -195,16 +224,22 @@ export default function AddLead() {
     setError('');
     const selectedTemplate = templates.find((t) => t.status === data.status);
     const whatsappTarget = data.whatsappPhone || data.phone;
-    const materialUrl = 'https://postimg.cc/gallery/QsVwM6J';
     const officialVideoUrl = 'https://www.facebook.com/share/r/1CdjpkHzKx/';
+    const materialLinks = [
+      normalizeHttpsUrl(materialImageUrl1),
+      normalizeHttpsUrl(materialImageUrl2),
+    ].filter(Boolean);
     const outgoingMessage = [
       messageDraft.trim(),
-      includeMaterial ? `الماتريال (صور):\n${materialUrl}` : '',
+      includeMaterial ? 'الماتريال: (مرفق صور)' : '',
       includeOfficialVideo ? `الفيديو الرسمي:\n${officialVideoUrl}` : '',
     ].filter(Boolean).join('\n\n');
     const shouldAutoSend =
       data.status !== 'NEW' && AUTO_MESSAGE_STATUSES.has(data.status) && !!outgoingMessage.trim();
     const waWindow = shouldAutoSend ? window.open('about:blank', '_blank') : null;
+    const materialWindows = shouldAutoSend && includeMaterial && materialLinks.length
+      ? materialLinks.map(() => window.open('about:blank', '_blank', 'noopener,noreferrer'))
+      : [];
     try {
       console.log('Submitting lead data:', { ...data, claimedLeadId, recontactLeadId });
       if (claimedLeadId) {
@@ -228,11 +263,21 @@ export default function AddLead() {
           } else {
             window.location.href = whatsappUrl;
           }
+          if (includeMaterial && materialLinks.length) {
+            materialLinks.forEach((url, idx) => {
+              const win = materialWindows[idx];
+              if (win && !win.closed) {
+                win.location.replace(url);
+              }
+            });
+          }
         } else {
           waWindow?.close();
+          materialWindows.forEach((win) => win?.close());
         }
       } else {
         waWindow?.close();
+        materialWindows.forEach((win) => win?.close());
       }
 
       if (claimedLeadId && data.status === 'NEW') {
@@ -279,13 +324,13 @@ export default function AddLead() {
   }, [previewMessage]);
   const outgoingPreview = useMemo(() => {
     const materialUrl = 'https://postimg.cc/gallery/QsVwM6J';
-    const officialVideoUrl = 'https://www.facebook.com/share/r/1CdjpkHzKx/';
     return [
       messageDraft.trim(),
       includeMaterial ? `الماتريال (صور):\n${materialUrl}` : '',
-      includeOfficialVideo ? `الفيديو الرسمي:\n${officialVideoUrl}` : '',
+      includeMaterial ? 'الماتريال: (مرفق صور)' : '',
     ].filter(Boolean).join('\n\n');
   }, [includeMaterial, includeOfficialVideo, messageDraft]);
+
 
   useEffect(() => {
     if (currentName?.trim()) return;
@@ -548,6 +593,27 @@ export default function AddLead() {
               <span>ارسال الفديو الرسمي</span>
             </label>
           </div>
+          {includeMaterial && (
+            <div className="mt-4 grid md:grid-cols-2 gap-3">
+              <input
+                value={materialImageUrl1}
+                onChange={(e) => setMaterialImageUrl1(e.target.value)}
+                className="input-field"
+                placeholder="رابط الصورة 1 (https://...)"
+                dir="ltr"
+              />
+              <input
+                value={materialImageUrl2}
+                onChange={(e) => setMaterialImageUrl2(e.target.value)}
+                className="input-field"
+                placeholder="رابط الصورة 2 (https://...)"
+                dir="ltr"
+              />
+              <p className="md:col-span-2 text-xs text-slate-500">
+                سيتم فتح الصور تلقائيًا بعد حفظ العميل لتقدر تبعتها كصور بسرعة.
+              </p>
+            </div>
+          )}
         </div>
 
         {outgoingPreview && (
