@@ -196,7 +196,7 @@ export default function AddLead() {
     const selectedTemplate = templates.find((t) => t.status === data.status);
     const whatsappTarget = data.whatsappPhone || data.phone;
     const materialUrl = 'https://postimg.cc/gallery/QsVwM6J';
-    const officialVideoUrl = 'https://www.facebook.com/share/r/1CdjpkHzKx/';
+    const officialVideoUrl = 'https://www.facebook.com/share/r/1CGFgtDdvd/';
     const outgoingMessage = [
       messageDraft.trim(),
       includeMaterial ? `الماتريال (صور):\n${materialUrl}` : '',
@@ -280,7 +280,7 @@ export default function AddLead() {
 
   const outgoingPreview = useMemo(() => {
     const materialUrl = 'https://postimg.cc/gallery/QsVwM6J';
-    const officialVideoUrl = 'https://www.facebook.com/share/r/1CdjpkHzKx/';
+    const officialVideoUrl = 'https://www.facebook.com/share/r/1CGFgtDdvd/';
     return [
       messageDraft.trim(),
       includeMaterial ? `الماتريال (صور):\n${materialUrl}` : '',
