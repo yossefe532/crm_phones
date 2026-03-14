@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { AlertCircle, CheckCircle2, Loader2, PencilLine, Save, Trash2, UserPlus, X, TrendingUp } from 'lucide-react';
 import api from '../../services/api';
@@ -82,6 +82,7 @@ export default function Employees() {
   const [search, setSearch] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const invalidateTimerRef = useRef<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [bulkTarget, setBulkTarget] = useState<number | ''>('');
   const [bulkApprovalTarget, setBulkApprovalTarget] = useState<number | ''>('');
@@ -141,6 +142,26 @@ export default function Employees() {
   useEffect(() => {
     fetchTeams();
   }, []);
+
+  useEffect(() => {
+    const onInvalidate = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (invalidateTimerRef.current) {
+        window.clearTimeout(invalidateTimerRef.current);
+      }
+      invalidateTimerRef.current = window.setTimeout(() => {
+        fetchEmployees(search);
+      }, 240);
+    };
+    window.addEventListener('crm:invalidate', onInvalidate as any);
+    return () => {
+      window.removeEventListener('crm:invalidate', onInvalidate as any);
+      if (invalidateTimerRef.current) {
+        window.clearTimeout(invalidateTimerRef.current);
+        invalidateTimerRef.current = null;
+      }
+    };
+  }, [search]);
 
   const kpi = useMemo(() => {
     const agentsCount = employees.length;

@@ -84,6 +84,43 @@ const prisma = new PrismaClient({
   log: ['query', 'info', 'warn', 'error'],
 });
 
+const sseClients = new Map();
+
+const writeSseEvent = (res, event, data) => {
+  try {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  } catch {
+  }
+};
+
+const writeSseComment = (res, text) => {
+  try {
+    res.write(`: ${text}\n\n`);
+  } catch {
+  }
+};
+
+const broadcastTenantEvent = (tenantId, event, data) => {
+  for (const client of sseClients.values()) {
+    if (tenantId && client.tenantId && client.tenantId !== tenantId) continue;
+    writeSseEvent(client.res, event, data);
+  }
+};
+
+const broadcastUserEvent = (userId, event, data) => {
+  for (const client of sseClients.values()) {
+    if (client.userId !== userId) continue;
+    writeSseEvent(client.res, event, data);
+  }
+};
+
+setInterval(() => {
+  for (const client of sseClients.values()) {
+    writeSseComment(client.res, 'ping');
+  }
+}, 25000).unref();
+
 // Auth Middleware
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -106,6 +143,28 @@ const authorizeRole = (roles) => {
     next();
   };
 };
+
+app.get('/api/events', authenticateToken, (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+  });
+
+  const userId = req.user?.id;
+  const tenantId = req.user?.tenantId || null;
+  const teamId = req.user?.teamId || null;
+  const role = req.user?.role || null;
+  const id = randomBytes(12).toString('hex');
+
+  sseClients.set(id, { res, userId, tenantId, teamId, role });
+  writeSseComment(res, 'connected');
+  writeSseEvent(res, 'hello', { at: new Date().toISOString() });
+
+  req.on('close', () => {
+    sseClients.delete(id);
+  });
+});
 
 const normalizeSingleQueryValue = (value) => {
   if (Array.isArray(value)) return value[0];
@@ -648,6 +707,246 @@ async function startServer() {
     }
   };
 
+  const LOW_APPROVAL_CALLS_STEP = 20;
+  const LOW_APPROVAL_MIN_APPROVALS_PER_STEP = 5;
+  const lastLowApprovalAlertByUser = new Map();
+  const lastMotivationSentAtByUser = new Map();
+
+  const motivationalLines = [
+    'اشتغل على الجودة مش بس الكمية. ركّز على خطوة واضحة في نهاية المكالمة.',
+    'كل مكالمة لازم تنتهي بسؤال إغلاق واضح: نكمل فين وبإيه؟',
+    'لو النسبة قليلة، جرّب تغيّر الافتتاحية وسؤالين الاستكشاف قبل العرض.',
+    'ركز على سبب واحد قوي يناسب العميل بدل ما تعدد مزايا كتير مرة واحدة.',
+    'اسمع أكتر من ما تتكلم: خلي العميل يقول مشكلته، وبعدها اربط الحل.',
+    'قسّم هدفك لدفعات صغيرة: 10 مكالمات وراجع الأداء بسرعة.',
+  ];
+
+  const pickStableLine = (seed, lines) => {
+    if (!Array.isArray(lines) || lines.length === 0) return '';
+    const str = String(seed || '');
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+    return lines[h % lines.length];
+  };
+
+  const buildJobTips = (profile) => {
+    const department = String(profile?.department || '').toLowerCase();
+    const jobTitle = String(profile?.jobTitle || '').toLowerCase();
+    const key = `${department} ${jobTitle}`;
+    const tips = [];
+    if (key.includes('inside') || key.includes('sales') || key.includes('telesales') || key.includes('call')) {
+      tips.push('قلّل وقت المقدمة: 10-15 ثانية ثم سؤال استكشاف.');
+      tips.push('اسأل: إيه أهم هدف حضرتك عايز توصله؟ ثم اربط الحل بالهدف.');
+      tips.push('قبل الإغلاق: لخص في جملة واحدة واطلب خطوة محددة (موعد/تحويل/مستند).');
+    }
+    if (key.includes('support') || key.includes('customer') || key.includes('service')) {
+      tips.push('ابدأ بتأكيد المشكلة ثم قدّم حل واحد واضح وخطوة متابعة.');
+      tips.push('لو العميل متردد: قدّم اختيارين بدل سؤال مفتوح.');
+    }
+    if (!tips.length) {
+      tips.push('جرّب: سؤال استكشاف + عرض مختصر + سؤال إغلاق.');
+      tips.push('راجع آخر 5 مكالمات: فين نقطة الاعتراض المتكررة؟');
+    }
+    return tips.slice(0, 3);
+  };
+
+  const getTodayInteractionCounts = async (userId, { start, end }) => {
+    const [callsCount, approvalsCount] = await Promise.all([
+      prisma.interaction.count({
+        where: {
+          userId,
+          type: { in: ['CALL', 'SEND'] },
+          date: { gte: start, lt: end },
+        },
+      }),
+      prisma.interaction.count({
+        where: {
+          userId,
+          type: { in: ['CALL', 'SEND'] },
+          outcome: 'AGREED',
+          date: { gte: start, lt: end },
+        },
+      }),
+    ]);
+    return { callsCount, approvalsCount };
+  };
+
+  const buildTenantLeaderboard = async ({ tenantId, start, end }) => {
+    const users = await prisma.user.findMany({
+      where: { tenantId, role: 'SALES' },
+      select: {
+        id: true,
+        name: true,
+        tenantId: true,
+        employeeProfile: true,
+      },
+    });
+    const ids = users.map((u) => u.id);
+    const [callsRows, approvalsRows] = ids.length
+      ? await Promise.all([
+          prisma.interaction.groupBy({
+            by: ['userId'],
+            where: {
+              userId: { in: ids },
+              type: { in: ['CALL', 'SEND'] },
+              date: { gte: start, lt: end },
+            },
+            _count: { _all: true },
+          }),
+          prisma.interaction.groupBy({
+            by: ['userId'],
+            where: {
+              userId: { in: ids },
+              type: { in: ['CALL', 'SEND'] },
+              outcome: 'AGREED',
+              date: { gte: start, lt: end },
+            },
+            _count: { _all: true },
+          }),
+        ])
+      : [[], []];
+
+    const callsMap = callsRows.reduce((acc, row) => {
+      acc.set(row.userId, row._count._all || 0);
+      return acc;
+    }, new Map());
+    const approvalsMap = approvalsRows.reduce((acc, row) => {
+      acc.set(row.userId, row._count._all || 0);
+      return acc;
+    }, new Map());
+
+    const leaderboard = users.map((u) => ({
+      userId: u.id,
+      name: u.name,
+      tenantId: u.tenantId,
+      profile: u.employeeProfile,
+      callsToday: callsMap.get(u.id) || 0,
+      approvalsToday: approvalsMap.get(u.id) || 0,
+    })).sort((a, b) => {
+      if (b.callsToday !== a.callsToday) return b.callsToday - a.callsToday;
+      return b.approvalsToday - a.approvalsToday;
+    });
+
+    const rankMap = leaderboard.reduce((acc, row, idx) => {
+      acc.set(row.userId, idx + 1);
+      return acc;
+    }, new Map());
+
+    return { leaderboard, rankMap };
+  };
+
+  const maybeSendMotivationPulse = async (userRow, { rankMap, leaderboard, start, end }) => {
+    const userId = userRow.userId;
+    const now = Date.now();
+    const last = lastMotivationSentAtByUser.get(userId) || 0;
+    if (now - last < 25 * 60 * 1000) return;
+    lastMotivationSentAtByUser.set(userId, now);
+
+    const callsCount = userRow.callsToday || 0;
+    const approvalsCount = userRow.approvalsToday || 0;
+    const callTarget = userRow.profile?.dailyCallTarget || 30;
+    const approvalTarget = userRow.profile?.dailyApprovalTarget || 0;
+    const remainingCalls = Math.max(0, callTarget - callsCount);
+    const remainingApprovals = Math.max(0, approvalTarget - approvalsCount);
+    if (remainingCalls === 0 && remainingApprovals === 0) return;
+
+    const rank = rankMap.get(userId) || null;
+    const third = leaderboard[2] || null;
+    const gapCalls = third && rank && rank > 3 ? Math.max(0, (third.callsToday - callsCount) + 1) : 0;
+    const gapApprovals = third && rank && rank > 3 ? Math.max(0, (third.approvalsToday - approvalsCount) + 1) : 0;
+    const tips = buildJobTips(userRow.profile);
+    const line = pickStableLine(`${userId}:${new Date().toISOString().slice(0, 13)}`, motivationalLines);
+
+    const parts = [];
+    if (remainingCalls > 0) parts.push(`${remainingCalls} مكالمة`);
+    if (remainingApprovals > 0) parts.push(`${remainingApprovals} موافقة`);
+
+    const rankText = rank
+      ? (rank <= 3 ? `ترتيبك النهاردة: ${rank} (توب 3)` : `ترتيبك النهاردة: ${rank}`)
+      : '';
+    const top3Text = third && rank && rank > 3
+      ? `علشان تدخل التوب 3: محتاج تقريباً +${gapCalls} مكالمة و +${gapApprovals} موافقة.`
+      : '';
+
+    const lowApprovalsMilestone = callsCount >= LOW_APPROVAL_CALLS_STEP
+      ? Math.floor(callsCount / LOW_APPROVAL_CALLS_STEP) * LOW_APPROVAL_MIN_APPROVALS_PER_STEP
+      : 0;
+    const qualityText = lowApprovalsMilestone > 0 && approvalsCount < lowApprovalsMilestone
+      ? `ملحوظة: موافقاتك أقل من المتوقع لنفس عدد المكالمات. ركّز على سؤال الإغلاق.`
+      : '';
+
+    const body = [
+      `مكالمات: ${callsCount}/${callTarget}`,
+      `موافقات: ${approvalsCount}/${approvalTarget}`,
+      `المتبقي: ${parts.join(' و ')}`,
+      rankText,
+      top3Text,
+      qualityText,
+      tips[0] ? `نصيحة: ${tips[0]}` : '',
+      line ? `تحفيز: ${line}` : '',
+    ].filter(Boolean).join(' • ');
+
+    await sendPushNotification(userId, {
+      title: 'دفعة تحفيز',
+      body,
+      icon: '/icon-192.png',
+    });
+    broadcastUserEvent(userId, 'coach', {
+      title: 'دفعة تحفيز',
+      body,
+      level: 'info',
+      at: new Date().toISOString(),
+    });
+  };
+
+  const maybeSendLowApprovalAlert = async (userId) => {
+    try {
+      const user = await prisma.user.findFirst({
+        where: { id: userId },
+        include: { employeeProfile: true },
+      });
+      if (!user || user.role !== 'SALES') return;
+      const { start, end } = buildDayRange();
+      const { callsCount, approvalsCount } = await getTodayInteractionCounts(userId, { start, end });
+      if (!callsCount || callsCount % LOW_APPROVAL_CALLS_STEP !== 0) return;
+      const milestone = Math.floor(callsCount / LOW_APPROVAL_CALLS_STEP);
+      if (milestone < 1) return;
+      const expectedApprovals = milestone * LOW_APPROVAL_MIN_APPROVALS_PER_STEP;
+      if (approvalsCount >= expectedApprovals) return;
+
+      const lastKey = lastLowApprovalAlertByUser.get(userId);
+      const alertKey = `${new Date().toISOString().slice(0, 10)}:${callsCount}`;
+      if (lastKey === alertKey) return;
+      lastLowApprovalAlertByUser.set(userId, alertKey);
+
+      const ratio = callsCount > 0 ? Math.round((approvalsCount / callsCount) * 100) : 0;
+      const tips = buildJobTips(user.employeeProfile);
+      const line = pickStableLine(`${userId}:${alertKey}`, motivationalLines);
+      const body = [
+        `عملت ${callsCount} مكالمة النهاردة والموافقات ${approvalsCount}.`,
+        `ده أقل من المتوقع (${expectedApprovals}) لنفس عدد المكالمات.`,
+        `نسبة التحويل: ${ratio}%.`,
+        tips.length ? `نصيحة سريعة: ${tips[0]}` : '',
+        tips[1] ? `كمان: ${tips[1]}` : '',
+        line ? `تحفيز: ${line}` : '',
+      ].filter(Boolean).join(' ');
+
+      await sendPushNotification(userId, {
+        title: 'مراجعة سريعة للأداء',
+        body,
+        icon: '/icon-192.png',
+      });
+      broadcastUserEvent(userId, 'coach', {
+        title: 'مراجعة سريعة للأداء',
+        body,
+        level: 'warning',
+        at: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('maybeSendLowApprovalAlert error:', error);
+    }
+  };
+
   const checkTargetCompletion = async (userId) => {
     try {
       const user = await prisma.user.findFirst({
@@ -659,23 +958,7 @@ async function startServer() {
       const callTarget = user.employeeProfile?.dailyCallTarget || 30;
       const approvalTarget = user.employeeProfile?.dailyApprovalTarget || 0;
       const { start, end } = buildDayRange();
-      const [callsCount, approvalsCount] = await Promise.all([
-        prisma.interaction.count({
-          where: {
-            userId,
-            type: { in: ['CALL', 'SEND'] },
-            date: { gte: start, lt: end },
-          },
-        }),
-        prisma.interaction.count({
-          where: {
-            userId,
-            type: { in: ['CALL', 'SEND'] },
-            outcome: 'AGREED',
-            date: { gte: start, lt: end },
-          },
-        }),
-      ]);
+      const { callsCount, approvalsCount } = await getTodayInteractionCounts(userId, { start, end });
 
       const callsSatisfied = callsCount >= callTarget;
       const approvalsSatisfied = approvalsCount >= approvalTarget;
@@ -2224,8 +2507,13 @@ async function startServer() {
             notes: notes || null,
           },
         });
-        // Check for target completion after interaction is created
         checkTargetCompletion(req.user.id).catch(() => {});
+        maybeSendLowApprovalAlert(req.user.id).catch(() => {});
+        broadcastTenantEvent(req.user?.tenantId, 'invalidate', {
+          at: new Date().toISOString(),
+          kind: 'interaction',
+          userId: req.user?.id,
+        });
 
         return updatedLead;
       });
@@ -2499,8 +2787,13 @@ async function startServer() {
             notes: notes || null,
           },
         });
-        // Check for target completion after interaction is created
         checkTargetCompletion(req.user.id).catch(() => {});
+        maybeSendLowApprovalAlert(req.user.id).catch(() => {});
+        broadcastTenantEvent(req.user?.tenantId, 'invalidate', {
+          at: new Date().toISOString(),
+          kind: 'interaction',
+          userId: req.user?.id,
+        });
 
         return lead;
       });
@@ -2714,8 +3007,13 @@ async function startServer() {
               notes: createdLead.notes || null,
             },
           });
-          // Check for target completion after interaction is created
           checkTargetCompletion(req.user.id).catch(() => {});
+          maybeSendLowApprovalAlert(req.user.id).catch(() => {});
+          broadcastTenantEvent(req.user?.tenantId, 'invalidate', {
+            at: new Date().toISOString(),
+            kind: 'interaction',
+            userId: req.user?.id,
+          });
         }
 
         return createdLead;
@@ -2797,8 +3095,13 @@ async function startServer() {
               notes: notes || null,
             },
           });
-          // Check for target completion after interaction is created
           checkTargetCompletion(req.user.id).catch(() => {});
+          maybeSendLowApprovalAlert(req.user.id).catch(() => {});
+          broadcastTenantEvent(req.user?.tenantId, 'invalidate', {
+            at: new Date().toISOString(),
+            kind: 'interaction',
+            userId: req.user?.id,
+          });
         }
 
         return updatedLead;
@@ -3308,6 +3611,11 @@ async function startServer() {
         }
       }
 
+      broadcastTenantEvent(actor.tenantId, 'invalidate', {
+        at: new Date().toISOString(),
+        kind: 'targets',
+        actorId: actor.id,
+      });
       res.json({ message: `تم تحديث التارجت لـ ${userIds.length} موظف بنجاح` });
     } catch (error) {
       console.error(error);
@@ -3387,6 +3695,12 @@ async function startServer() {
         }
       });
 
+      broadcastTenantEvent(actor.tenantId, 'invalidate', {
+        at: new Date().toISOString(),
+        kind: 'profile',
+        actorId: actor.id,
+        userId: employeeId,
+      });
       res.json({ user: updatedUser, profile: updatedProfile });
     } catch (error) {
       console.error(error);
@@ -4077,6 +4391,44 @@ async function startServer() {
       }
     } catch (error) {
       console.error('[cron] Hourly reminder error:', error);
+    }
+  });
+
+  cron.schedule('*/30 9-22 * * *', async () => {
+    try {
+      const { start, end } = buildDayRange();
+      const salesUsers = await prisma.user.findMany({
+        where: { role: 'SALES' },
+        select: { id: true, tenantId: true, employeeProfile: true },
+      });
+      const byTenant = salesUsers.reduce((acc, u) => {
+        if (!u.tenantId) return acc;
+        const key = u.tenantId;
+        const list = acc.get(key) || [];
+        list.push(u);
+        acc.set(key, list);
+        return acc;
+      }, new Map());
+
+      for (const [tenantId, users] of byTenant.entries()) {
+        const { leaderboard, rankMap } = await buildTenantLeaderboard({ tenantId, start, end });
+        const userMap = users.reduce((acc, u) => {
+          acc.set(u.id, u);
+          return acc;
+        }, new Map());
+        const mergedRows = leaderboard.map((row) => {
+          const u = userMap.get(row.userId);
+          return {
+            ...row,
+            profile: u?.employeeProfile || row.profile,
+          };
+        });
+        for (const row of mergedRows) {
+          await maybeSendMotivationPulse(row, { rankMap, leaderboard: mergedRows, start, end });
+        }
+      }
+    } catch (error) {
+      console.error('[cron] Motivation pulse error:', error);
     }
   });
 

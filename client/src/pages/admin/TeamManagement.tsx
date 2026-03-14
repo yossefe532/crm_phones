@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, CheckCircle2, Crown, KeyRound, Loader2, PencilLine, Trash2, UserPlus } from 'lucide-react';
 import api from '../../services/api';
@@ -68,6 +68,7 @@ export default function TeamManagement() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const invalidateTimerRef = useRef<number | null>(null);
   const [deletingMemberId, setDeletingMemberId] = useState<number | null>(null);
   const [resettingMemberId, setResettingMemberId] = useState<number | null>(null);
   const [deletingTeamId, setDeletingTeamId] = useState<number | null>(null);
@@ -116,6 +117,26 @@ export default function TeamManagement() {
 
   useEffect(() => {
     void fetchTeams();
+  }, []);
+
+  useEffect(() => {
+    const onInvalidate = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (invalidateTimerRef.current) {
+        window.clearTimeout(invalidateTimerRef.current);
+      }
+      invalidateTimerRef.current = window.setTimeout(() => {
+        void fetchTeams();
+      }, 220);
+    };
+    window.addEventListener('crm:invalidate', onInvalidate as any);
+    return () => {
+      window.removeEventListener('crm:invalidate', onInvalidate as any);
+      if (invalidateTimerRef.current) {
+        window.clearTimeout(invalidateTimerRef.current);
+        invalidateTimerRef.current = null;
+      }
+    };
   }, []);
 
   const isAdmin = user?.role === 'ADMIN';

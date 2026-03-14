@@ -69,7 +69,7 @@ interface Team {
 }
 
 export default function Dashboard() {
-  const REFRESH_INTERVAL_MS = 8000;
+  const REFRESH_INTERVAL_MS = 15000;
   const { user } = useAuth();
   const navigate = useNavigate();
   const [stats, setStats] = useState<Stats>({ total: 0, agreed: 0, hesitant: 0, rejected: 0, poolCount: 0 });
@@ -79,6 +79,7 @@ export default function Dashboard() {
   const [claiming, setClaiming] = useState(false);
   const [testingNotification, setTestingNotification] = useState(false);
   const isFetchingRef = useRef(false);
+  const invalidateTimerRef = useRef<number | null>(null);
 
   const fetchTeams = async () => {
     if (user?.role !== 'ADMIN') return;
@@ -117,6 +118,26 @@ export default function Dashboard() {
       }
     }, REFRESH_INTERVAL_MS);
     return () => window.clearInterval(intervalId);
+  }, [selectedTeamId]);
+
+  useEffect(() => {
+    const onInvalidate = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (invalidateTimerRef.current) {
+        window.clearTimeout(invalidateTimerRef.current);
+      }
+      invalidateTimerRef.current = window.setTimeout(() => {
+        void fetchStats();
+      }, 180);
+    };
+    window.addEventListener('crm:invalidate', onInvalidate as any);
+    return () => {
+      window.removeEventListener('crm:invalidate', onInvalidate as any);
+      if (invalidateTimerRef.current) {
+        window.clearTimeout(invalidateTimerRef.current);
+        invalidateTimerRef.current = null;
+      }
+    };
   }, [selectedTeamId]);
 
   const claimLead = async () => {
