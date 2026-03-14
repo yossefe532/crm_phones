@@ -8,7 +8,9 @@ import {
   MessageCircle, 
   Check, 
   User,
-  AlertCircle
+  AlertCircle,
+  Image,
+  PlayCircle
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
@@ -267,6 +269,28 @@ export default function AddLead() {
     setIsEditingMessage(false);
   }, [previewMessage]);
 
+  const openWhatsAppWithText = (text: string) => {
+    const whatsappTarget = currentWhatsappPhone || currentPhone;
+    const whatsappNumber = toWhatsAppNumber(whatsappTarget || '');
+    if (!whatsappNumber || !text.trim()) return;
+    const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(text)}`;
+    window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleSendMaterial = () => {
+    const base = messageDraft.trim();
+    if (!base) return;
+    const appended = `${base}\n\nالماتريال (صور):\nhttps://postimg.cc/gallery/QsVwM6J`;
+    openWhatsAppWithText(appended);
+  };
+
+  const handleSendOfficialVideo = () => {
+    const base = messageDraft.trim();
+    if (!base) return;
+    const appended = `${base}\n\nالفيديو الرسمي:\nhttps://www.facebook.com/share/r/1CdjpkHzKx/`;
+    openWhatsAppWithText(appended);
+  };
+
   useEffect(() => {
     if (currentName?.trim()) return;
     if (!currentNotes?.trim() || currentNotes.trim().length < 8) return;
@@ -488,6 +512,26 @@ export default function AddLead() {
                 {status.label}
               </label>
             ))}
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={handleSendMaterial}
+              disabled={!messageDraft.trim() || !(currentWhatsappPhone || currentPhone)}
+              className="px-4 py-2 rounded-xl font-bold flex items-center gap-2 bg-indigo-100 text-indigo-700 hover:bg-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Image size={18} />
+              ارسال الماتريال
+            </button>
+            <button
+              type="button"
+              onClick={handleSendOfficialVideo}
+              disabled={!messageDraft.trim() || !(currentWhatsappPhone || currentPhone)}
+              className="px-4 py-2 rounded-xl font-bold flex items-center gap-2 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <PlayCircle size={18} />
+              ارسال الفديو الرسمي
+            </button>
           </div>
         </div>
 

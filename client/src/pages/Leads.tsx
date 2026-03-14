@@ -106,7 +106,15 @@ export default function Leads() {
       lead.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       lead.phone.includes(searchTerm),
     )
-    .filter((lead) => filterStatus === 'ALL' || lead.status === filterStatus);
+    .filter((lead) => filterStatus === 'ALL' || lead.status === filterStatus)
+    .sort((a, b) => {
+      const aLast = a.lastInteractionAt ? new Date(a.lastInteractionAt).getTime() : -1;
+      const bLast = b.lastInteractionAt ? new Date(b.lastInteractionAt).getTime() : -1;
+      if (aLast !== bLast) return bLast - aLast;
+      const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return bCreated - aCreated;
+    });
 
   const getStatusColor = (status: string) => {
     switch (status) {

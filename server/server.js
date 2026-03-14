@@ -2912,10 +2912,18 @@ async function startServer() {
         return acc;
       }, new Map());
 
-      res.json(leads.map((lead) => ({
+      const payload = leads.map((lead) => ({
         ...lead,
         lastInteractionAt: lastMap.get(lead.id) || null,
-      })));
+      })).sort((a, b) => {
+        const aLast = a.lastInteractionAt ? new Date(a.lastInteractionAt).getTime() : -1;
+        const bLast = b.lastInteractionAt ? new Date(b.lastInteractionAt).getTime() : -1;
+        if (aLast !== bLast) return bLast - aLast;
+        const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return bCreated - aCreated;
+      });
+      res.json(payload);
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Failed to fetch leads' });
