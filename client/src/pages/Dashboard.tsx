@@ -555,15 +555,21 @@ export default function Dashboard() {
                           </div>
                           <div>
                             <p className="font-black text-slate-800 text-sm md:text-base leading-tight group-hover:text-indigo-700 transition-colors">{member.name}</p>
-                            <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-tighter">الهدف: {member.dailyCallTarget}{approvalTarget > 0 ? ` / ${approvalTarget}` : ''}</p>
+                            <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-tighter">
+                              الهدف:{' '}
+                              <span dir="ltr">
+                                {approvalTarget > 0 ? `${approvalTarget} / ${member.dailyCallTarget}` : `${member.dailyCallTarget}`}
+                              </span>
+                            </p>
                           </div>
                         </div>
                       </td>
                       <td className="p-4">
                         <div className="flex flex-col items-center gap-2">
-                          <div className="flex items-baseline gap-1">
+                          <div className="flex items-baseline gap-1" dir="ltr">
                             <span className="text-base font-black text-slate-800">{member.callsToday}</span>
-                            <span className="text-[10px] text-slate-400 font-bold">/ {member.dailyCallTarget}</span>
+                            <span className="text-[10px] text-slate-400 font-bold">/</span>
+                            <span className="text-[10px] text-slate-400 font-bold">{member.dailyCallTarget}</span>
                           </div>
                           <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden border border-slate-50 shadow-inner">
                             <div 
