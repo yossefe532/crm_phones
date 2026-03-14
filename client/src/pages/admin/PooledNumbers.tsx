@@ -41,10 +41,24 @@ interface BatchStatRow {
   };
 }
 
+interface PoolTeamStat {
+  teamId: number | null;
+  teamName: string;
+  remainingCount: number;
+  pulledCount: number;
+}
+
+interface PoolSummary {
+  remainingTotal: number;
+  pulledTotal: number;
+  teamStats: PoolTeamStat[];
+}
+
 export default function PooledNumbers() {
   const [loading, setLoading] = useState(true);
   const [leads, setLeads] = useState<PooledLead[]>([]);
   const [teams, setTeams] = useState<TeamOption[]>([]);
+  const [summary, setSummary] = useState<PoolSummary | null>(null);
   const [search, setSearch] = useState('');
   const [teamId, setTeamId] = useState<number | ''>('');
   const [batchId, setBatchId] = useState<number | ''>('');
@@ -85,8 +99,10 @@ export default function PooledNumbers() {
         },
       });
       setLeads(response.data?.leads || []);
+      setSummary(response.data?.summary || null);
     } catch (err: any) {
       setError(err.response?.data?.error || 'تعذر تحميل بيانات المجمع');
+      setSummary(null);
     } finally {
       setLoading(false);
     }
@@ -115,13 +131,12 @@ export default function PooledNumbers() {
     fetchPooled();
   }, [teamId, batchId, nameMode, includeHidden]);
 
-  const groupedByTeam = useMemo(() => {
-    return leads.reduce<Record<string, number>>((acc, lead) => {
-      const key = lead.team?.name || 'غير محدد';
-      acc[key] = (acc[key] || 0) + 1;
-      return acc;
-    }, {});
-  }, [leads]);
+  const teamCards = useMemo(() => {
+    if (!summary?.teamStats?.length) return [];
+    return summary.teamStats
+      .filter((row) => (teamId ? row.teamId === teamId : true))
+      .sort((a, b) => (b.remainingCount + b.pulledCount) - (a.remainingCount + a.pulledCount));
+  }, [summary, teamId]);
 
   const deleteAllPooled = async () => {
     const confirmed = window.confirm('سيتم حذف كل الأرقام المجمعة حسب الفلاتر الحالية. هل أنت متأكد؟');
@@ -302,15 +317,49 @@ export default function PooledNumbers() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="glass-card p-4">
           <p className="text-xs text-slate-500">إجمالي المجمع</p>
-          <p className="text-2xl font-bold text-purple-700">{leads.length}</p>
+          <p className="text-2xl font-bold text-purple-700">{summary?.remainingTotal ?? leads.length}</p>
         </div>
-        {Object.entries(groupedByTeam).slice(0, 3).map(([teamName, count]) => (
-          <div key={teamName} className="glass-card p-4">
-            <p className="text-xs text-slate-500 truncate">{teamName}</p>
-            <p className="text-2xl font-bold text-slate-700">{count}</p>
-          </div>
-        ))}
+        <div className="glass-card p-4">
+          <p className="text-xs text-slate-500">المتبقي (غير مسحوب)</p>
+          <p className="text-2xl font-bold text-slate-700">{summary?.remainingTotal ?? '-'}</p>
+        </div>
+        <div className="glass-card p-4">
+          <p className="text-xs text-slate-500">المسحوب</p>
+          <p className="text-2xl font-bold text-slate-700">{summary?.pulledTotal ?? '-'}</p>
+        </div>
+        <div className="glass-card p-4">
+          <p className="text-xs text-slate-500">عدد الفرق</p>
+          <p className="text-2xl font-bold text-slate-700">{teams.length}</p>
+        </div>
       </div>
+
+      {teamCards.length > 0 && (
+        <div className="glass-card p-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <h3 className="text-lg font-bold text-slate-800">سحب الفرق من المجمع</h3>
+            <div className="text-xs text-slate-500">
+              يعرض: مسحوب + متبقي (غير مسحوب)
+            </div>
+          </div>
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {teamCards.map((row) => (
+              <div key={String(row.teamId)} className="border border-slate-200 rounded-2xl p-4 bg-white/60">
+                <div className="font-black text-slate-800 truncate">{row.teamName}</div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <div className="text-xs text-slate-500">متبقي</div>
+                    <div className="text-xl font-black text-slate-800">{row.remainingCount}</div>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <div className="text-xs text-slate-500">مسحوب</div>
+                    <div className="text-xl font-black text-slate-800">{row.pulledCount}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="glass-card p-4 space-y-4">
         <div className="flex flex-col md:flex-row md:items-center gap-3">

@@ -1997,7 +1997,13 @@ async function startServer() {
     };
 
     try {
-      const [leads, total] = await Promise.all([
+      const teams = await prisma.team.findMany({
+        where: { tenantId: actor.tenantId },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      });
+
+      const [leads, total, remainingGroups, pulledGroups, pulledTotal] = await Promise.all([
         prisma.lead.findMany({
           where,
           include: {
@@ -2007,8 +2013,65 @@ async function startServer() {
           orderBy: { createdAt: 'desc' },
         }),
         prisma.lead.count({ where }),
+        prisma.lead.groupBy({
+          by: ['teamId'],
+          where,
+          _count: { _all: true },
+        }),
+        prisma.lead.groupBy({
+          by: ['teamId'],
+          where: {
+            tenantId: actor.tenantId,
+            ...(teamId ? { teamId } : {}),
+            ...(batchId ? { batchId } : {}),
+            ...(location ? { batch: { location: { contains: location } } } : {}),
+            claimedAt: { not: null },
+          },
+          _count: { _all: true },
+        }),
+        prisma.lead.count({
+          where: {
+            tenantId: actor.tenantId,
+            ...(teamId ? { teamId } : {}),
+            ...(batchId ? { batchId } : {}),
+            ...(location ? { batch: { location: { contains: location } } } : {}),
+            claimedAt: { not: null },
+          },
+        }),
       ]);
-      return res.json({ total, leads });
+
+      const teamNameById = teams.reduce((acc, t) => {
+        acc.set(t.id, t.name);
+        return acc;
+      }, new Map());
+
+      const remainingByTeamId = remainingGroups.reduce((acc, row) => {
+        acc.set(row.teamId ?? null, row._count._all || 0);
+        return acc;
+      }, new Map());
+      const pulledByTeamId = pulledGroups.reduce((acc, row) => {
+        acc.set(row.teamId ?? null, row._count._all || 0);
+        return acc;
+      }, new Map());
+
+      const allTeamIds = teams.map((t) => t.id);
+      const allKeys = [null, ...allTeamIds];
+      const teamStats = allKeys.map((key) => ({
+        teamId: key,
+        teamName: key === null ? 'غير محدد' : (teamNameById.get(key) || `Team ${key}`),
+        remainingCount: remainingByTeamId.get(key) || 0,
+        pulledCount: pulledByTeamId.get(key) || 0,
+      }));
+
+      return res.json({
+        total,
+        leads,
+        summary: {
+          remainingTotal: total,
+          pulledTotal,
+          teamStats,
+        },
+      });
     } catch (error) {
       console.error(error);
       return res.status(500).json({ error: 'Failed to fetch pooled numbers' });
