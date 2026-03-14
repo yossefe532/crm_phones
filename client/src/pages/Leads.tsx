@@ -27,10 +27,11 @@ interface Lead {
   notes?: string;
   agent?: { name: string; email: string };
   createdAt: string;
+  lastInteractionAt?: string | null;
 }
 
 export default function Leads() {
-  const REFRESH_INTERVAL_MS = 250;
+  const REFRESH_INTERVAL_MS = 15000;
   const { user } = useAuth();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,6 +40,7 @@ export default function Leads() {
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [deletingLeadId, setDeletingLeadId] = useState<number | null>(null);
   const isFetchingRef = useRef(false);
+  const invalidateTimerRef = useRef<number | null>(null);
 
   const fetchLeads = async () => {
     if (isFetchingRef.current) return;
@@ -63,6 +65,40 @@ export default function Leads() {
     }, REFRESH_INTERVAL_MS);
     return () => window.clearInterval(intervalId);
   }, []);
+
+  useEffect(() => {
+    const onInvalidate = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (invalidateTimerRef.current) {
+        window.clearTimeout(invalidateTimerRef.current);
+      }
+      invalidateTimerRef.current = window.setTimeout(() => {
+        void fetchLeads();
+      }, 220);
+    };
+    window.addEventListener('crm:invalidate', onInvalidate as any);
+    return () => {
+      window.removeEventListener('crm:invalidate', onInvalidate as any);
+      if (invalidateTimerRef.current) {
+        window.clearTimeout(invalidateTimerRef.current);
+        invalidateTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const formatCairoDateTime = (value?: string | null) => {
+    if (!value) return '-';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '-';
+    return new Intl.DateTimeFormat('ar-EG', {
+      timeZone: 'Africa/Cairo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(d);
+  };
 
   const filteredLeads = leads
     .filter((lead) => lead.source !== 'POOL')
@@ -181,17 +217,18 @@ export default function Leads() {
                 <th className="p-4 font-semibold text-slate-600">المصدر</th>
                 <th className="p-4 font-semibold text-slate-600">الموظف</th>
                 <th className="p-4 font-semibold text-slate-600">تاريخ الإضافة</th>
+                <th className="p-4 font-semibold text-slate-600">آخر مكالمة</th>
                 <th className="p-4 font-semibold text-slate-600">إجراءات</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-slate-500">جاري التحميل...</td>
+                  <td colSpan={8} className="p-8 text-center text-slate-500">جاري التحميل...</td>
                 </tr>
               ) : filteredLeads.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-slate-500">لا توجد بيانات</td>
+                  <td colSpan={8} className="p-8 text-center text-slate-500">لا توجد بيانات</td>
                 </tr>
               ) : (
                 filteredLeads.map((lead) => (
@@ -222,6 +259,9 @@ export default function Leads() {
                     </td>
                     <td className="p-4 text-slate-500 text-sm">
                       {new Date(lead.createdAt).toLocaleDateString('ar-EG')}
+                    </td>
+                    <td className="p-4 text-slate-500 text-sm whitespace-nowrap">
+                      {formatCairoDateTime(lead.lastInteractionAt)}
                     </td>
                     <td className="p-4">
                       <div className="flex items-center gap-2">
@@ -277,7 +317,11 @@ export default function Leads() {
                   <span className={clsx("px-2 py-1 rounded-full text-xs font-bold", getStatusColor(lead.status))}>{getStatusLabel(lead.status)}</span>
                 </div>
                 <p className="font-mono text-sm text-slate-600" dir="ltr">{lead.phone}</p>
-                <p className="text-xs text-slate-500">{lead.agent?.name || '-'} • {new Date(lead.createdAt).toLocaleDateString('ar-EG')}</p>
+                <p className="text-xs text-slate-500">
+                  {lead.agent?.name || '-'} • {new Date(lead.createdAt).toLocaleDateString('ar-EG')}
+                  {' • '}
+                  آخر مكالمة: {formatCairoDateTime(lead.lastInteractionAt)}
+                </p>
                 <div className="grid grid-cols-2 gap-2">
                   <a href={`tel:${lead.phone}`} className="py-2 rounded-lg bg-emerald-50 text-emerald-700 text-center font-bold">اتصال</a>
                   <button onClick={() => openWhatsApp(lead.whatsappPhone || lead.phone)} className="py-2 rounded-lg bg-green-50 text-green-700 text-center font-bold">واتساب</button>

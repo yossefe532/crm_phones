@@ -2896,7 +2896,26 @@ async function startServer() {
         },
         orderBy: { createdAt: 'desc' }
       });
-      res.json(leads);
+      const leadIds = leads.map((lead) => lead.id);
+      const lastRows = leadIds.length
+        ? await prisma.interaction.groupBy({
+            by: ['leadId'],
+            where: {
+              leadId: { in: leadIds },
+              type: { in: ['CALL', 'SEND'] },
+            },
+            _max: { date: true },
+          })
+        : [];
+      const lastMap = lastRows.reduce((acc, row) => {
+        acc.set(row.leadId, row._max?.date || null);
+        return acc;
+      }, new Map());
+
+      res.json(leads.map((lead) => ({
+        ...lead,
+        lastInteractionAt: lastMap.get(lead.id) || null,
+      })));
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Failed to fetch leads' });
