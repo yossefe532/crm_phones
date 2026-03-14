@@ -73,6 +73,8 @@ export default function AddLead() {
   const [templates, setTemplates] = useState<StatusTemplate[]>([]);
   const [messageDraft, setMessageDraft] = useState('');
   const [isEditingMessage, setIsEditingMessage] = useState(false);
+  const [includeMaterial, setIncludeMaterial] = useState(false);
+  const [includeOfficialVideo, setIncludeOfficialVideo] = useState(false);
   const [assistantTab, setAssistantTab] = useState<'TRAINING' | 'SCRIPT'>('SCRIPT');
   const [trainingTopic, setTrainingTopic] = useState('');
   const [trainingContext, setTrainingContext] = useState('');
@@ -193,8 +195,15 @@ export default function AddLead() {
     setError('');
     const selectedTemplate = templates.find((t) => t.status === data.status);
     const whatsappTarget = data.whatsappPhone || data.phone;
+    const materialUrl = 'https://postimg.cc/gallery/QsVwM6J';
+    const officialVideoUrl = 'https://www.facebook.com/share/r/1CdjpkHzKx/';
+    const outgoingMessage = [
+      messageDraft.trim(),
+      includeMaterial ? `الماتريال (صور):\n${materialUrl}` : '',
+      includeOfficialVideo ? `الفيديو الرسمي:\n${officialVideoUrl}` : '',
+    ].filter(Boolean).join('\n\n');
     const shouldAutoSend =
-      data.status !== 'NEW' && AUTO_MESSAGE_STATUSES.has(data.status) && !!messageDraft.trim();
+      data.status !== 'NEW' && AUTO_MESSAGE_STATUSES.has(data.status) && !!outgoingMessage.trim();
     const waWindow = shouldAutoSend ? window.open('about:blank', '_blank') : null;
     try {
       console.log('Submitting lead data:', { ...data, claimedLeadId, recontactLeadId });
@@ -210,7 +219,7 @@ export default function AddLead() {
       if (shouldAutoSend && selectedTemplate) {
         const whatsappNumber = toWhatsAppNumber(whatsappTarget);
         const whatsappUrl = whatsappNumber
-          ? `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(messageDraft)}`
+          ? `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(outgoingMessage)}`
           : '';
 
         if (whatsappUrl) {
@@ -268,28 +277,15 @@ export default function AddLead() {
     setMessageDraft(previewMessage);
     setIsEditingMessage(false);
   }, [previewMessage]);
-
-  const openWhatsAppWithText = (text: string) => {
-    const whatsappTarget = currentWhatsappPhone || currentPhone;
-    const whatsappNumber = toWhatsAppNumber(whatsappTarget || '');
-    if (!whatsappNumber || !text.trim()) return;
-    const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(text)}`;
-    window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
-  };
-
-  const handleSendMaterial = () => {
-    const base = messageDraft.trim();
-    if (!base) return;
-    const appended = `${base}\n\nالماتريال (صور):\nhttps://postimg.cc/gallery/QsVwM6J`;
-    openWhatsAppWithText(appended);
-  };
-
-  const handleSendOfficialVideo = () => {
-    const base = messageDraft.trim();
-    if (!base) return;
-    const appended = `${base}\n\nالفيديو الرسمي:\nhttps://www.facebook.com/share/r/1CdjpkHzKx/`;
-    openWhatsAppWithText(appended);
-  };
+  const outgoingPreview = useMemo(() => {
+    const materialUrl = 'https://postimg.cc/gallery/QsVwM6J';
+    const officialVideoUrl = 'https://www.facebook.com/share/r/1CdjpkHzKx/';
+    return [
+      messageDraft.trim(),
+      includeMaterial ? `الماتريال (صور):\n${materialUrl}` : '',
+      includeOfficialVideo ? `الفيديو الرسمي:\n${officialVideoUrl}` : '',
+    ].filter(Boolean).join('\n\n');
+  }, [includeMaterial, includeOfficialVideo, messageDraft]);
 
   useEffect(() => {
     if (currentName?.trim()) return;
@@ -514,28 +510,47 @@ export default function AddLead() {
             ))}
           </div>
           <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={handleSendMaterial}
-              disabled={!messageDraft.trim() || !(currentWhatsappPhone || currentPhone)}
-              className="px-4 py-2 rounded-xl font-bold flex items-center gap-2 bg-indigo-100 text-indigo-700 hover:bg-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            <label
+              className={clsx(
+                "cursor-pointer select-none px-5 py-3 rounded-2xl font-black flex items-center gap-3 transition-all border-2",
+                includeMaterial ? "border-indigo-500 bg-indigo-100 text-indigo-800" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700",
+              )}
             >
-              <Image size={18} />
-              ارسال الماتريال
-            </button>
-            <button
-              type="button"
-              onClick={handleSendOfficialVideo}
-              disabled={!messageDraft.trim() || !(currentWhatsappPhone || currentPhone)}
-              className="px-4 py-2 rounded-xl font-bold flex items-center gap-2 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              <input
+                type="checkbox"
+                className="hidden"
+                checked={includeMaterial}
+                onChange={(e) => setIncludeMaterial(e.target.checked)}
+              />
+              <span className={clsx("w-6 h-6 rounded-lg flex items-center justify-center border-2", includeMaterial ? "bg-indigo-600 border-indigo-600 text-white" : "border-slate-300")}>
+                {includeMaterial ? <Check size={18} /> : null}
+              </span>
+              <Image size={20} />
+              <span>ارسال الماتريال</span>
+            </label>
+
+            <label
+              className={clsx(
+                "cursor-pointer select-none px-5 py-3 rounded-2xl font-black flex items-center gap-3 transition-all border-2",
+                includeOfficialVideo ? "border-emerald-500 bg-emerald-100 text-emerald-800" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700",
+              )}
             >
-              <PlayCircle size={18} />
-              ارسال الفديو الرسمي
-            </button>
+              <input
+                type="checkbox"
+                className="hidden"
+                checked={includeOfficialVideo}
+                onChange={(e) => setIncludeOfficialVideo(e.target.checked)}
+              />
+              <span className={clsx("w-6 h-6 rounded-lg flex items-center justify-center border-2", includeOfficialVideo ? "bg-emerald-600 border-emerald-600 text-white" : "border-slate-300")}>
+                {includeOfficialVideo ? <Check size={18} /> : null}
+              </span>
+              <PlayCircle size={20} />
+              <span>ارسال الفديو الرسمي</span>
+            </label>
           </div>
         </div>
 
-        {previewMessage && (
+        {outgoingPreview && (
           <div className="p-4 bg-green-50 border border-green-100 rounded-xl space-y-3">
             <div className="flex items-center justify-between">
               <h4 className="font-bold text-green-800 flex items-center gap-2">
@@ -559,7 +574,7 @@ export default function AddLead() {
               />
             ) : (
               <p className="text-sm text-slate-700 bg-white p-3 rounded-lg border border-green-100 whitespace-pre-wrap">
-                {messageDraft}
+                {outgoingPreview}
               </p>
             )}
             <p className="text-xs text-slate-500">
