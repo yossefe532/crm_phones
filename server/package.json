@@ -13,6 +13,9 @@
     "test": "node tests/team-isolation.verify.mjs",
     "test:tenant": "node tests/tenant-isolation.verify.mjs"
   },
+  "prisma": {
+    "seed": "node prisma/seed.js"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
