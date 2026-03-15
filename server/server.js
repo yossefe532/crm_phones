@@ -18,6 +18,7 @@ const __dirname = dirname(__filename);
 dotenv.config({ path: join(__dirname, '.env') });
 
 // Configure Web Push
+const PUSH_ENABLED = Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
   webpush.setVapidDetails(
     `mailto:${process.env.VAPID_EMAIL || 'admin@edicon.com'}`,
@@ -648,6 +649,14 @@ async function startServer() {
 
   // --- Push Notification Routes ---
 
+  // GET /api/notifications/vapid-public-key
+  app.get('/api/notifications/vapid-public-key', (req, res) => {
+    if (!process.env.VAPID_PUBLIC_KEY) {
+      return res.status(503).json({ error: 'Push notifications are disabled' });
+    }
+    return res.json({ publicKey: process.env.VAPID_PUBLIC_KEY });
+  });
+
   // POST /api/notifications/subscribe
   app.post('/api/notifications/subscribe', authenticateToken, async (req, res) => {
     const { endpoint, keys } = req.body;
@@ -679,10 +688,18 @@ async function startServer() {
 
   const sendPushNotification = async (userId, payload) => {
     try {
+      if (!PUSH_ENABLED) {
+        return { sent: 0, reason: 'disabled' };
+      }
       const subscriptions = await prisma.pushSubscription.findMany({
         where: { userId },
       });
 
+      if (!subscriptions.length) {
+        return { sent: 0, reason: 'no_subscriptions' };
+      }
+
+      let sent = 0;
       const promises = subscriptions.map((sub) => {
         const pushSubscription = {
           endpoint: sub.endpoint,
@@ -692,6 +709,9 @@ async function startServer() {
           },
         };
         return webpush.sendNotification(pushSubscription, JSON.stringify(payload))
+          .then(() => {
+            sent += 1;
+          })
           .catch(async (err) => {
             if (err.statusCode === 410 || err.statusCode === 404) {
               // Subscription expired or no longer valid, delete it
@@ -702,8 +722,10 @@ async function startServer() {
       });
 
       await Promise.all(promises);
+      return { sent, reason: sent ? 'ok' : 'failed' };
     } catch (error) {
       console.error('sendPushNotification error:', error);
+      return { sent: 0, reason: 'error' };
     }
   };
 
@@ -3801,12 +3823,21 @@ async function startServer() {
   // GET /api/notifications/test
   app.get('/api/notifications/test', authenticateToken, async (req, res) => {
     try {
-      await sendPushNotification(req.user.id, {
+      const result = await sendPushNotification(req.user.id, {
         title: 'تجربة الإشعارات 🔔',
         body: 'مبروك! نظام الإشعارات شغال بنجاح على جهازك.',
         icon: '/icon-192.png',
       });
-      res.json({ message: 'تم إرسال إشعار تجريبي بنجاح' });
+      if (result.reason === 'disabled') {
+        return res.status(503).json({ error: 'Push notifications are disabled on server (missing VAPID keys)' });
+      }
+      if (result.reason === 'no_subscriptions') {
+        return res.status(404).json({ error: 'لا يوجد اشتراك Push لهذا المستخدم. افتح النظام ووافق على الإشعارات ثم أعد تسجيل الدخول.' });
+      }
+      if (result.sent === 0) {
+        return res.status(502).json({ error: 'تعذر إرسال الإشعار (مزود Push رفض الطلب). جرّب إعادة تفعيل الإشعارات من المتصفح ثم تسجيل الدخول.' });
+      }
+      return res.json({ message: 'تم إرسال إشعار تجريبي بنجاح', sent: result.sent });
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'فشل إرسال الإشعار التجريبي' });
