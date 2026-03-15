@@ -411,6 +411,8 @@ export default function SimCards() {
           </div>
         </div>
       )}
+      </div>
+    )}
     </div>
   );
 }
