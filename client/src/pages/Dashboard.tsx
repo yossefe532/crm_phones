@@ -68,6 +68,8 @@ interface Team {
   name: string;
 }
 
+import VipFeatureAnnouncement from '../components/VipFeatureAnnouncement';
+
 export default function Dashboard() {
   const REFRESH_INTERVAL_MS = 15000;
   const { user } = useAuth();
@@ -220,6 +222,7 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 md:space-y-8 pb-10">
+      <VipFeatureAnnouncement />
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
         <div className="flex flex-col md:flex-row md:items-center gap-4 w-full md:w-auto">
           <div>
