@@ -16,7 +16,8 @@ import {
   PencilLine,
   Check,
   Loader2,
-  Smartphone
+  Smartphone,
+  Lightbulb
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from '../../store/useStore';
@@ -68,6 +69,7 @@ export default function Sidebar() {
     { to: '/leads/recontact', icon: PhoneCall, label: 'إعادة التواصل' },
     { to: '/leads/new', icon: UserPlus, label: 'إضافة عميل جديد' },
     { to: '/templates', icon: MessageSquare, label: 'قوالب الرسائل' },
+    { to: '/suggestions', icon: Lightbulb, label: 'الاقتراحات' },
   ];
 
   const adminItems = [

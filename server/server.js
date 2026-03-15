@@ -4477,6 +4477,55 @@ async function startServer() {
     }
   });
 
+  // --- Suggestions Routes ---
+
+  app.post('/api/suggestions', authenticateToken, async (req, res) => {
+    try {
+      const { content } = req.body;
+      if (!content || typeof content !== 'string' || !content.trim()) {
+        return res.status(400).json({ error: 'Suggestion content is required' });
+      }
+
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const suggestion = await prisma.suggestion.create({
+        data: {
+          content: content.trim(),
+          userId: actor.id,
+          tenantId: actor.tenantId
+        }
+      });
+
+      res.status(201).json(suggestion);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to submit suggestion' });
+    }
+  });
+
+  app.get('/api/admin/suggestions', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const suggestions = await prisma.suggestion.findMany({
+        where: { tenantId: actor.tenantId },
+        include: { user: { select: { name: true, email: true, role: true } } },
+        orderBy: { createdAt: 'desc' }
+      });
+
+      res.json(suggestions);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to fetch suggestions' });
+    }
+  });
+
   // --- Template Routes ---
 
   app.get('/api/templates', authenticateToken, async (req, res) => {

@@ -26,6 +26,7 @@ model User {
   employeeProfile EmployeeProfile?
   managedTeam     Team?            @relation("TeamLead")
   pushSubscriptions PushSubscription[]
+  suggestions     Suggestion[]
 
   @@index([tenantId])
   @@index([teamId])
@@ -169,6 +170,20 @@ model Tenant {
   leads            Lead[]
   leadBatches      LeadBatch[]
   messageTemplates MessageTemplate[]
+  suggestions      Suggestion[]
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
+}
+
+model Suggestion {
+  id        Int      @id @default(autoincrement())
+  content   String
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  tenantId  Int
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([userId])
 }

@@ -8,6 +8,7 @@ import RecontactLeads from './pages/RecontactLeads';
 import Login from './pages/Login';
 import UploadLeads from './pages/admin/UploadLeads';
 import Templates from './pages/admin/Templates';
+import Suggestions from './pages/Suggestions';
 import Employees from './pages/admin/Employees';
 import PooledNumbers from './pages/admin/PooledNumbers';
 import TeamManagement from './pages/admin/TeamManagement';
@@ -33,6 +34,7 @@ function App() {
             <Route path="leads/recontact" element={<RecontactLeads />} />
             <Route path="leads/new" element={<AddLead />} />
             <Route path="templates" element={<Templates />} />
+            <Route path="suggestions" element={<Suggestions />} />
             
             {/* Admin Only Routes */}
             <Route path="admin" element={<AdminRoute />}>
