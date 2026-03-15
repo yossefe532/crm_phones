@@ -3373,10 +3373,10 @@ async function startServer() {
           dailyCallTarget: m.employeeProfile?.dailyCallTarget || 30,
           dailyApprovalTarget: m.employeeProfile?.dailyApprovalTarget || 0,
         })).sort((a, b) => {
-          // Priority 1: Calls Today (Descending)
-          if (b.callsToday !== a.callsToday) return b.callsToday - a.callsToday;
-          // Priority 2: Agreed Today (Descending)
-          return b.agreedToday - a.agreedToday;
+          // Priority 1: Agreed Today (Descending)
+          if (b.agreedToday !== a.agreedToday) return b.agreedToday - a.agreedToday;
+          // Priority 2: Calls Today (Descending)
+          return b.callsToday - a.callsToday;
         });
       }
 
@@ -3413,8 +3413,10 @@ async function startServer() {
           const bDone = b.callsToday >= b.dailyCallTarget && b.agreedToday >= b.dailyApprovalTarget;
           if (aDone && !bDone) return -1;
           if (!aDone && bDone) return 1;
-          if (b.callsToday !== a.callsToday) return b.callsToday - a.callsToday;
-          return b.agreedToday - a.agreedToday;
+          // Priority 1: Agreed Today (Descending)
+          if (b.agreedToday !== a.agreedToday) return b.agreedToday - a.agreedToday;
+          // Priority 2: Calls Today (Descending)
+          return b.callsToday - a.callsToday;
         });
       } else if (actor.role === 'SALES') {
         const profile = await ensureEmployeeProfile(req.user.id);
@@ -3483,8 +3485,10 @@ async function startServer() {
           const bDone = b.callsToday >= b.dailyCallTarget && b.agreedToday >= b.dailyApprovalTarget;
           if (aDone && !bDone) return -1;
           if (!aDone && bDone) return 1;
-          if (b.callsToday !== a.callsToday) return b.callsToday - a.callsToday;
-          return b.agreedToday - a.agreedToday;
+          // Priority 1: Agreed Today (Descending)
+          if (b.agreedToday !== a.agreedToday) return b.agreedToday - a.agreedToday;
+          // Priority 2: Calls Today (Descending)
+          return b.callsToday - a.callsToday;
         });
 
         callsToday = teamMembersPerformance.reduce((sum, m) => sum + m.callsToday, 0);
