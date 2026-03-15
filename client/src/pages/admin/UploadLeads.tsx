@@ -23,6 +23,7 @@ export default function UploadLeads() {
   const [uploadScope, setUploadScope] = useState<'TEAM' | 'ALL'>('TEAM');
   const [batchName, setBatchName] = useState('');
   const [batchLocation, setBatchLocation] = useState('');
+  const [isVipBatch, setIsVipBatch] = useState(false);
   const { user } = useAuth();
 
   useEffect(() => {
@@ -83,6 +84,7 @@ export default function UploadLeads() {
           batchId: resolvedBatchId,
           batchName,
           batchLocation,
+          isVip: isVipBatch,
         });
         totalInserted += Number(uploadResponse.data?.inserted || 0);
         totalSkippedExisting += Number(uploadResponse.data?.skippedExisting || 0);
@@ -98,6 +100,7 @@ export default function UploadLeads() {
       setTextInput('');
       setBatchName('');
       setBatchLocation('');
+      setIsVipBatch(false);
     } catch (err: any) {
       setError(err.response?.data?.error || err.message || 'حدث خطأ أثناء رفع البيانات');
     } finally {
@@ -196,6 +199,19 @@ export default function UploadLeads() {
               placeholder="مثال: مدينة نصر أو إعلانات فيسبوك"
             />
           </div>
+        </div>
+
+        <div className="mb-6 flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="isVip"
+            checked={isVipBatch}
+            onChange={(e) => setIsVipBatch(e.target.checked)}
+            className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+          />
+          <label htmlFor="isVip" className="text-sm font-bold text-slate-700 cursor-pointer select-none">
+            تصنيف هذه الداتا كـ VIP (تظهر بزر ذهبي ولها شروط خاصة للسحب)
+          </label>
         </div>
 
         <div className="flex gap-4 mb-6">

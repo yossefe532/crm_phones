@@ -52,6 +52,7 @@ model Lead {
   gender       String        @default("UNKNOWN") // MALE, FEMALE, UNKNOWN
   hasProvidedName Boolean    @default(false)
   isHiddenFromSales Boolean  @default(false)
+  isVip        Boolean       @default(false)
   claimedAt    DateTime?
   status       String        // NEW, INTERESTED, AGREED, REJECTED, HESITANT, SPONSOR, NO_ANSWER, RECONTACT
   source       String        // CALL, SEND, POOL
@@ -137,6 +138,7 @@ model EmployeeProfile {
   dailyApprovalTarget Int   @default(0)
   simSerialNumber  String?
   simPhoneNumber   String?
+  manualVipLimit   Int?     // If null, use automatic logic based on approvals. If set, use this limit.
   isActive         Boolean  @default(true)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt

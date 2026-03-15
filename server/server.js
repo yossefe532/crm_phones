@@ -1819,7 +1819,7 @@ async function startServer() {
       return res.status(400).json({ error: actorTenantError });
     }
 
-    const { leads, teamId: rawTeamId, uploadScope, batchId: rawBatchId, batchName: rawBatchName, batchLocation: rawBatchLocation } = req.body;
+    const { leads, teamId: rawTeamId, uploadScope, batchId: rawBatchId, batchName: rawBatchName, batchLocation: rawBatchLocation, isVip } = req.body;
     if (!Array.isArray(leads) || leads.length === 0) {
       return res.status(400).json({ error: 'Leads array is required' });
     }
@@ -1940,6 +1940,7 @@ async function startServer() {
                 tenantId: actor.tenantId,
                 batchId: resolvedBatchId,
                 isHiddenFromSales: false,
+                isVip: !!isVip, // Add isVip flag here
               },
             });
             inserted += 1;
@@ -2414,6 +2415,9 @@ async function startServer() {
       return res.status(403).json({ error: 'Only sales users can claim pool leads' });
     }
 
+    const { type } = req.body; // 'vip' or 'regular'
+    const isVipClaim = type === 'vip';
+
     const actor = await getCurrentUserScope(req.user.id);
     if (!actor) {
       return res.status(401).json({ error: 'Invalid user context' });
@@ -2429,7 +2433,55 @@ async function startServer() {
 
     const userId = req.user.id;
     try {
+      // VIP Logic Check
+      if (isVipClaim) {
+        const profile = await prisma.employeeProfile.findUnique({ where: { userId } });
+        const manualLimit = profile?.manualVipLimit;
+        
+        let dailyLimit = 0;
+
+        if (manualLimit !== null && manualLimit !== undefined) {
+           dailyLimit = manualLimit;
+        } else {
+           // Automatic calculation based on TOTAL approvals
+           const totalApprovals = await prisma.interaction.count({
+             where: {
+               userId,
+               outcome: 'AGREED',
+               type: { in: ['CALL', 'SEND'] }
+             }
+           });
+           
+           if (totalApprovals >= 20) {
+             // 20 -> 1, 30 -> 2, ..., 80 -> 7
+             dailyLimit = Math.min(7, Math.floor((totalApprovals - 10) / 10));
+           }
+        }
+
+        if (dailyLimit <= 0) {
+          return res.status(403).json({ error: 'You are not eligible for VIP leads yet.' });
+        }
+
+        const todayStart = new Date();
+        todayStart.setHours(0,0,0,0);
+        
+        const vipClaimedToday = await prisma.lead.count({
+          where: {
+            agentId: userId,
+            isVip: true,
+            claimedAt: { gte: todayStart }
+          }
+        });
+
+        if (vipClaimedToday >= dailyLimit) {
+          return res.status(403).json({ error: `You have reached your daily VIP limit (${dailyLimit}).` });
+        }
+      }
+
       const staleThreshold = new Date(Date.now() - CLAIM_TIMEOUT_MINUTES * 60 * 1000);
+      
+      // Clean up stale claims (only for regular leads or general cleanup)
+      // We might want to be careful not to uncliam VIPs if they are special, but generally same rules apply
       await prisma.lead.updateMany({
         where: {
           tenantId: actor.tenantId,
@@ -2444,44 +2496,123 @@ async function startServer() {
           claimedAt: null,
         },
       });
-      // Guard against race conditions: find candidate then conditionally claim it.
-      const maxAttempts = 5;
-      const claimScope = buildPoolWhere({
+
+      // Build Query
+      const claimWhere = {
         tenantId: actor.tenantId,
-        OR: [
+        source: POOL_SOURCE,
+        status: POOL_STATUS,
+        agentId: null,
+        isHiddenFromSales: false,
+        isVip: isVipClaim // Strictly match VIP status
+      };
+
+      if (actor.teamId) {
+        // If user is in a team, they can claim leads assigned to their team OR leads with no team
+        claimWhere.OR = [
           { teamId: actor.teamId },
-          { teamId: null },
-        ],
-      });
+          { teamId: null }
+        ];
+      } else {
+        // If user has no team (unlikely for SALES but possible), only claim no-team leads
+        claimWhere.teamId = null;
+      }
+
+      const maxAttempts = 5;
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        const poolCount = await prisma.lead.count({ where: claimScope });
-        if (!poolCount) return res.status(404).json({ error: 'No leads available in pool' });
+        const poolCount = await prisma.lead.count({ where: claimWhere });
+        
+        if (!poolCount) {
+          return res.status(404).json({ error: isVipClaim ? 'No VIP leads available' : 'No leads available in pool' });
+        }
+
         const randomSkip = Math.floor(Math.random() * poolCount);
         const lead = await prisma.lead.findFirst({
-          where: claimScope,
-          orderBy: { id: 'asc' },
+          where: claimWhere,
           skip: randomSkip,
         });
 
-        if (!lead) return res.status(404).json({ error: 'No leads available in pool' });
-
-        const claimed = await prisma.lead.updateMany({
-          where: buildPoolWhere({ id: lead.id, teamId: lead.teamId ?? null, tenantId: actor.tenantId }),
-          data: { agentId: userId, status: POOL_STATUS, teamId: actor.teamId, claimedAt: new Date() },
-        });
-
-        if (!claimed.count) {
-          continue;
+        if (!lead) {
+           return res.status(404).json({ error: isVipClaim ? 'No VIP leads available' : 'No leads available in pool' });
         }
 
-        const updatedLead = await prisma.lead.findFirst({ where: { id: lead.id } });
-        return res.json(updatedLead);
+        // Try to claim
+        const updateResult = await prisma.lead.updateMany({
+          where: {
+            id: lead.id,
+            agentId: null // Optimistic locking
+          },
+          data: { 
+            agentId: userId, 
+            status: POOL_STATUS, 
+            teamId: actor.teamId, 
+            claimedAt: new Date() 
+          },
+        });
+
+        if (updateResult.count > 0) {
+          const updatedLead = await prisma.lead.findUnique({ where: { id: lead.id } });
+          return res.json(updatedLead);
+        }
+        // If count is 0, someone else claimed it, retry loop
       }
 
-      return res.status(409).json({ error: 'Lead was claimed by another user, please retry' });
+      return res.status(409).json({ error: 'Could not claim a lead after multiple attempts. Please try again.' });
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Failed to claim lead' });
+    }
+  });
+
+  // GET /api/me/vip-status
+  app.get('/api/me/vip-status', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'SALES') return res.status(403).json({ error: 'Not allowed' });
+    
+    try {
+      const userId = req.user.id;
+      const profile = await prisma.employeeProfile.findUnique({ where: { userId } });
+      const manualLimit = profile?.manualVipLimit;
+      
+      let dailyLimit = 0;
+      let isManual = false;
+
+      if (manualLimit !== null && manualLimit !== undefined) {
+         dailyLimit = manualLimit;
+         isManual = true;
+      } else {
+         const totalApprovals = await prisma.interaction.count({
+           where: {
+             userId,
+             outcome: 'AGREED',
+             type: { in: ['CALL', 'SEND'] }
+           }
+         });
+         
+         if (totalApprovals >= 20) {
+           dailyLimit = Math.min(7, Math.floor((totalApprovals - 10) / 10));
+         }
+      }
+
+      const todayStart = new Date();
+      todayStart.setHours(0,0,0,0);
+      
+      const claimedToday = await prisma.lead.count({
+        where: {
+          agentId: userId,
+          isVip: true,
+          claimedAt: { gte: todayStart }
+        }
+      });
+
+      res.json({
+        dailyLimit,
+        claimedToday,
+        remaining: Math.max(0, dailyLimit - claimedToday),
+        isManual
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to fetch VIP status' });
     }
   });
 
@@ -2580,6 +2711,7 @@ async function startServer() {
             courseId: Number.isNaN(parsedCourseId) ? null : parsedCourseId,
             whatsappPhone: hasWhatsappPhone ? normalizedWhatsappPhone : null,
             profileDetails: normalizedProfileDetails,
+            isVip: existingLead.isVip, // Maintain VIP status if set
           },
         });
 

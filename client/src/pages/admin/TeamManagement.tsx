@@ -9,6 +9,7 @@ interface TeamMemberProfile {
   dailyApprovalTarget?: number;
   department?: string;
   isActive?: boolean;
+  manualVipLimit?: number | null;
 }
 
 interface TeamMember {
@@ -290,8 +291,28 @@ export default function TeamManagement() {
     if (callTargetRaw === null) return;
     const approvalTargetRaw = window.prompt(`هدف الموافقات اليومي لـ ${member.name} (0 - 200)`, String(member.employeeProfile?.dailyApprovalTarget ?? 0));
     if (approvalTargetRaw === null) return;
+    
+    // VIP Limit prompt
+    const currentVipLimit = member.employeeProfile?.manualVipLimit;
+    const vipLimitRaw = window.prompt(
+      `الحد اليومي لسحب عملاء VIP (اتركه فارغاً للحساب التلقائي بناءً على الموافقات، أو اكتب 0 لمنع السحب، أو رقم لتحديد حد ثابت)`, 
+      currentVipLimit === null || currentVipLimit === undefined ? '' : String(currentVipLimit)
+    );
+    
     const callTarget = Number(callTargetRaw);
     const approvalTarget = Number(approvalTargetRaw);
+    let vipLimit: number | null = null;
+
+    if (vipLimitRaw !== null && vipLimitRaw.trim() !== '') {
+        const parsed = Number(vipLimitRaw);
+        if (!isNaN(parsed) && parsed >= 0) {
+            vipLimit = parsed;
+        } else {
+            setError('حد VIP يجب أن يكون رقماً صحيحاً موجباً أو فارغاً');
+            return;
+        }
+    }
+
     if (!Number.isInteger(callTarget) || callTarget < 1 || callTarget > 500) {
       setError('هدف المكالمات يجب أن يكون رقمًا صحيحًا بين 1 و 500');
       return;
@@ -305,8 +326,9 @@ export default function TeamManagement() {
       await api.put(`/admin/employees/${member.id}/profile`, {
         dailyCallTarget: callTarget,
         dailyApprovalTarget: approvalTarget,
+        manualVipLimit: vipLimit
       });
-      setSuccess(`تم تحديث تارجت ${member.name}`);
+      setSuccess(`تم تحديث تارجت وإعدادات VIP لـ ${member.name}`);
       await fetchTeams();
     } catch (err: any) {
       setError(err.response?.data?.error || 'تعذر تحديث تارجت العضو');

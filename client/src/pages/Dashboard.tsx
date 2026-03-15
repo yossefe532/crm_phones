@@ -77,6 +77,8 @@ export default function Dashboard() {
   const [selectedTeamId, setSelectedTeamId] = useState<number | ''>('');
   const [loading, setLoading] = useState(true);
   const [claiming, setClaiming] = useState(false);
+  const [vipClaiming, setVipClaiming] = useState(false);
+  const [vipStatus, setVipStatus] = useState<{ dailyLimit: number, claimedToday: number, remaining: number, isManual: boolean } | null>(null);
   const [testingNotification, setTestingNotification] = useState(false);
   const isFetchingRef = useRef(false);
   const invalidateTimerRef = useRef<number | null>(null);
@@ -106,8 +108,21 @@ export default function Dashboard() {
     }
   };
 
+  const fetchVipStatus = async () => {
+    if (user?.role !== 'SALES') return;
+    try {
+      const response = await api.get('/me/vip-status');
+      setVipStatus(response.data);
+    } catch (error) {
+      console.error('Failed to fetch VIP status', error);
+    }
+  };
+
   useEffect(() => {
     fetchTeams();
+    if (user?.role === 'SALES') {
+      fetchVipStatus();
+    }
   }, [user?.role]);
 
   useEffect(() => {
@@ -140,19 +155,26 @@ export default function Dashboard() {
     };
   }, [selectedTeamId]);
 
-  const claimLead = async () => {
-    setClaiming(true);
+  const claimLead = async (isVip = false) => {
+    if (isVip) {
+      setVipClaiming(true);
+    } else {
+      setClaiming(true);
+    }
     try {
-      const response = await api.post('/leads/claim');
+      const response = await api.post('/leads/claim', { type: isVip ? 'vip' : 'regular' });
       await fetchStats();
+      if (isVip) await fetchVipStatus();
+      
       const leadId = response.data?.id;
       if (leadId) {
         navigate(`/leads/new?claimId=${leadId}`, { state: { claimedLead: response.data } });
       }
     } catch (error: any) {
-      alert(error.response?.data?.error || 'لا توجد عملاء متاحين في المجمع حالياً');
+      alert(error.response?.data?.error || (isVip ? 'لا توجد عملاء VIP متاحين' : 'لا توجد عملاء متاحين في المجمع حالياً'));
     } finally {
       setClaiming(false);
+      setVipClaiming(false);
     }
   };
 
@@ -238,14 +260,41 @@ export default function Dashboard() {
           </button>
 
           {user?.role !== 'ADMIN' ? (
-            <button
-              onClick={claimLead}
-              disabled={claiming}
-              className="btn-primary w-full md:w-auto flex items-center justify-center gap-3 px-6 py-3 rounded-xl shadow-lg shadow-indigo-200 hover:shadow-indigo-300 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100 group"
-            >
-              <Download size={20} className="group-hover:animate-bounce" />
-              <span className="font-bold">سحب عميل جديد</span>
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => claimLead(false)}
+                disabled={claiming}
+                className="btn-primary w-full md:w-auto flex items-center justify-center gap-3 px-6 py-3 rounded-xl shadow-lg shadow-indigo-200 hover:shadow-indigo-300 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100 group"
+              >
+                <Download size={20} className="group-hover:animate-bounce" />
+                <span className="font-bold">سحب عميل جديد</span>
+              </button>
+
+              {user?.role === 'SALES' && (
+                <button
+                  onClick={() => claimLead(true)}
+                  disabled={vipClaiming || !vipStatus || vipStatus.remaining <= 0}
+                  className={clsx(
+                    "w-full md:w-auto flex items-center justify-center gap-3 px-6 py-3 rounded-xl shadow-lg transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100 group relative overflow-hidden",
+                    (!vipStatus || vipStatus.remaining <= 0) 
+                      ? "bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200" 
+                      : "bg-gradient-to-r from-amber-200 to-yellow-400 text-amber-900 hover:shadow-amber-200 border border-yellow-300"
+                  )}
+                  title={vipStatus ? `متبقي لك ${vipStatus.remaining} من أصل ${vipStatus.dailyLimit} عميل VIP اليوم` : 'غير متاح'}
+                >
+                  <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 skew-y-12" />
+                  <Crown size={20} className={clsx((!vipStatus || vipStatus.remaining <= 0) ? "" : "animate-pulse")} />
+                  <span className="font-black relative z-10">
+                    سحب VIP 
+                    {vipStatus && vipStatus.dailyLimit > 0 && (
+                      <span className="mr-1 text-xs bg-black/10 px-1.5 py-0.5 rounded-full">
+                        {vipStatus.remaining}/{vipStatus.dailyLimit}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              )}
+            </div>
           ) : (
             <button
               onClick={() => navigate('/admin/pooled-numbers')}
