@@ -135,6 +135,8 @@ model EmployeeProfile {
   timezone         String   @default("Africa/Cairo")
   dailyCallTarget  Int      @default(30)
   dailyApprovalTarget Int   @default(0)
+  simSerialNumber  String?
+  simPhoneNumber   String?
   isActive         Boolean  @default(true)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt

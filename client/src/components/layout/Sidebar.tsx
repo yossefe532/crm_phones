@@ -15,7 +15,8 @@ import {
   Database,
   PencilLine,
   Check,
-  Loader2
+  Loader2,
+  Smartphone
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from '../../store/useStore';
@@ -72,6 +73,7 @@ export default function Sidebar() {
   const adminItems = [
     { to: '/admin/teams', icon: ShieldCheck, label: 'إدارة الفرق' },
     { to: '/admin/employees', icon: UsersRound, label: 'إدارة الموظفين' },
+    { to: '/admin/sim-cards', icon: Smartphone, label: 'خطوط العمل' },
     { to: '/admin/upload', icon: Upload, label: 'رفع داتا أرقام' },
     { to: '/admin/pooled-numbers', icon: Database, label: 'الأرقام المجمعة' },
   ];

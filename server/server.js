@@ -4222,6 +4222,129 @@ async function startServer() {
     }
   });
 
+  // --- SIM Cards Management ---
+
+  app.post('/api/admin/sim-cards/parse', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    try {
+      const { text } = req.body;
+      if (!text || typeof text !== 'string') return res.status(400).json({ error: 'Invalid text' });
+
+      const actor = await getCurrentUserScope(req.user.id);
+      const users = await prisma.user.findMany({
+        where: { tenantId: actor.tenantId, role: { in: ['SALES', 'TEAM_LEAD'] } },
+        select: { id: true, name: true }
+      });
+
+      const lines = text.split('\n').filter(l => l.trim());
+      const parsedResults = lines.map(line => {
+        const cleanLine = line.trim();
+        // Regex to find Serial (14+ digits) and Phone (01 followed by 9 digits)
+        const serialMatch = cleanLine.match(/(\d{14,})/);
+        const phoneMatch = cleanLine.match(/(01\d{9})/);
+        
+        const serial = serialMatch ? serialMatch[0] : null;
+        const phone = phoneMatch ? phoneMatch[0] : null;
+        
+        // Remove serial, phone and trailing numbers (like ID 195) from name
+        let namePart = cleanLine;
+        if (serial) namePart = namePart.replace(serial, '');
+        if (phone) namePart = namePart.replace(phone, '');
+        // Remove trailing numbers that are likely IDs (1-4 digits at end)
+        namePart = namePart.replace(/\s+\d{1,4}$/, '');
+        const name = namePart.replace(/[^\u0600-\u06FFa-zA-Z\s]/g, '').trim();
+
+        // Find best match
+        let bestMatch = null;
+        let maxScore = 0;
+
+        if (name) {
+          const tokens1 = name.toLowerCase().split(/\s+/).filter(t => t.length > 2);
+          users.forEach(user => {
+            const tokens2 = user.name.toLowerCase().split(/\s+/).filter(t => t.length > 2);
+            if (tokens2.length === 0) return;
+            
+            const intersection = tokens1.filter(t => tokens2.some(t2 => t2.includes(t) || t.includes(t2)));
+            const score = intersection.length / Math.max(tokens1.length, tokens2.length);
+            
+            if (score > maxScore && score > 0.3) { // Threshold
+              maxScore = score;
+              bestMatch = { id: user.id, name: user.name, score };
+            }
+          });
+        }
+
+        return {
+          raw: cleanLine,
+          parsed: { name, serial, phone },
+          match: bestMatch
+        };
+      });
+
+      res.json({ results: parsedResults, users });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to parse SIM cards list' });
+    }
+  });
+
+  app.post('/api/admin/sim-cards/assign', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    try {
+      const { assignments } = req.body; // Array of { userId, serial, phone }
+      if (!Array.isArray(assignments)) return res.status(400).json({ error: 'Invalid assignments' });
+
+      const actor = await getCurrentUserScope(req.user.id);
+      
+      const updates = [];
+      for (const item of assignments) {
+        if (!item.userId || !item.serial) continue;
+        
+        // Verify user belongs to tenant
+        const user = await prisma.user.findFirst({
+            where: { id: item.userId, tenantId: actor.tenantId }
+        });
+        if (!user) continue;
+
+        updates.push(
+          prisma.employeeProfile.upsert({
+            where: { userId: item.userId },
+            update: { simSerialNumber: item.serial, simPhoneNumber: item.phone },
+            create: { userId: item.userId, simSerialNumber: item.serial, simPhoneNumber: item.phone }
+          })
+        );
+      }
+
+      await prisma.$transaction(updates);
+      res.json({ success: true, count: updates.length });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to assign SIM cards' });
+    }
+  });
+
+  app.get('/api/admin/sim-cards', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      const employees = await prisma.user.findMany({
+        where: { tenantId: actor.tenantId, role: { in: ['SALES', 'TEAM_LEAD'] } },
+        include: { employeeProfile: true },
+        orderBy: { name: 'asc' }
+      });
+
+      const result = employees.map(u => ({
+        id: u.id,
+        name: u.name,
+        role: u.role,
+        simSerialNumber: u.employeeProfile?.simSerialNumber || null,
+        simPhoneNumber: u.employeeProfile?.simPhoneNumber || null
+      }));
+
+      res.json(result);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to fetch SIM cards' });
+    }
+  });
+
   // --- Template Routes ---
 
   app.get('/api/templates', authenticateToken, async (req, res) => {

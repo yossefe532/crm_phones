@@ -12,6 +12,7 @@ import Employees from './pages/admin/Employees';
 import PooledNumbers from './pages/admin/PooledNumbers';
 import TeamManagement from './pages/admin/TeamManagement';
 import EmployeePerformance from './pages/admin/EmployeePerformance';
+import SimCards from './pages/admin/SimCards';
 import PrivateRoute from './components/PrivateRoute';
 import AdminRoute from './components/AdminRoute';
 import SuperAdminRoute from './components/SuperAdminRoute';
@@ -38,6 +39,7 @@ function App() {
               <Route path="employees" element={<Employees />} />
               <Route path="employees/:id" element={<EmployeePerformance />} />
               <Route path="teams" element={<TeamManagement />} />
+              <Route path="sim-cards" element={<SimCards />} />
               <Route element={<SuperAdminRoute />}>
                 <Route path="upload" element={<UploadLeads />} />
                 <Route path="pooled-numbers" element={<PooledNumbers />} />
