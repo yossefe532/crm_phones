@@ -1,6 +1,6 @@
 import { spawnSync } from 'child_process';
 import { createHash, randomUUID } from 'crypto';
-import { readdirSync, readFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import Database from 'better-sqlite3';
@@ -61,34 +61,25 @@ const ensureMigrationsTable = (db) => {
   `);
 };
 
-const markAllMigrationsAsApplied = (db) => {
-  const migrationNames = readdirSync(migrationsDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
+const migrationIsMarkedApplied = (db, migrationName) => {
+  const row = db
+    .prepare('SELECT 1 AS ok FROM "_prisma_migrations" WHERE "migration_name" = ? LIMIT 1')
+    .get(migrationName);
+  return !!row?.ok;
+};
 
-  const existing = new Set(
-    db.prepare('SELECT migration_name FROM "_prisma_migrations"').all().map((row) => row.migration_name),
-  );
-
-  const insert = db.prepare(`
+const markMigrationAsApplied = (db, migrationName, sql) => {
+  const checksum = createHash('sha256').update(sql).digest('hex');
+  db.prepare(`
     INSERT INTO "_prisma_migrations"
       ("id", "checksum", "finished_at", "migration_name", "logs", "rolled_back_at", "started_at", "applied_steps_count")
     VALUES
       (@id, @checksum, CURRENT_TIMESTAMP, @migration_name, '', NULL, CURRENT_TIMESTAMP, 1)
-  `);
-
-  for (const migrationName of migrationNames) {
-    if (existing.has(migrationName)) continue;
-    const sqlPath = join(migrationsDir, migrationName, 'migration.sql');
-    const sql = readFileSync(sqlPath, 'utf-8');
-    const checksum = createHash('sha256').update(sql).digest('hex');
-    insert.run({
-      id: randomUUID(),
-      checksum,
-      migration_name: migrationName,
-    });
-  }
+  `).run({
+    id: randomUUID(),
+    checksum,
+    migration_name: migrationName,
+  });
 };
 
 const autoBaselineIfNeeded = () => {
@@ -99,13 +90,15 @@ const autoBaselineIfNeeded = () => {
       .prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='Tenant' LIMIT 1`)
       .get();
 
+    ensureMigrationsTable(db);
     if (!hasTenant) {
+      const tenantMigrationName = '20260305205931_tenant_isolation';
       const tenantMigrationSql = readFileSync(tenantMigrationFile, 'utf-8');
       db.exec(tenantMigrationSql);
+      if (!migrationIsMarkedApplied(db, tenantMigrationName)) {
+        markMigrationAsApplied(db, tenantMigrationName, tenantMigrationSql);
+      }
     }
-
-    ensureMigrationsTable(db);
-    markAllMigrationsAsApplied(db);
   } finally {
     db.close();
   }

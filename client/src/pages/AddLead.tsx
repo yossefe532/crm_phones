@@ -193,7 +193,6 @@ export default function AddLead() {
   const onSubmit = async (data: LeadForm) => {
     setSubmitting(true);
     setError('');
-    const selectedTemplate = templates.find((t) => t.status === data.status);
     const whatsappTarget = data.whatsappPhone || data.phone;
     const materialUrl = 'https://postimg.cc/gallery/QsVwM6J';
     const officialVideoUrl = 'https://www.facebook.com/share/r/1CGFgtDdvd/';
@@ -204,7 +203,6 @@ export default function AddLead() {
     ].filter(Boolean).join('\n\n');
     const shouldAutoSend =
       data.status !== 'NEW' && AUTO_MESSAGE_STATUSES.has(data.status) && !!outgoingMessage.trim();
-    const waWindow = shouldAutoSend ? window.open('about:blank', '_blank') : null;
     try {
       console.log('Submitting lead data:', { ...data, claimedLeadId, recontactLeadId });
       if (claimedLeadId) {
@@ -216,23 +214,18 @@ export default function AddLead() {
       }
       finalizedRef.current = true;
 
-      if (shouldAutoSend && selectedTemplate) {
+      if (shouldAutoSend) {
         const whatsappNumber = toWhatsAppNumber(whatsappTarget);
         const whatsappUrl = whatsappNumber
           ? `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(outgoingMessage)}`
           : '';
 
         if (whatsappUrl) {
-          if (waWindow && !waWindow.closed) {
-            waWindow.location.replace(whatsappUrl);
-          } else {
-            window.location.href = whatsappUrl;
+          const opened = window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+          if (!opened) {
+            window.location.assign(whatsappUrl);
           }
-        } else {
-          waWindow?.close();
         }
-      } else {
-        waWindow?.close();
       }
 
       if (claimedLeadId && data.status === 'NEW') {
@@ -245,7 +238,6 @@ export default function AddLead() {
         }
       }
     } catch (err: any) {
-      waWindow?.close();
       setError(err.response?.data?.error || 'حدث خطأ أثناء إضافة العميل');
     } finally {
       setSubmitting(false);
