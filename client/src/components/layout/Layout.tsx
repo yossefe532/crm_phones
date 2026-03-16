@@ -26,10 +26,10 @@ export default function Layout() {
             <Menu size={24} />
           </button>
           <span className="font-bold text-slate-800">أكاديمية إيديكون</span>
-          <div className="w-8" />
+          <ReleaseNotesBell />
         </header>
 
-        <div className="absolute top-3 right-3 md:top-5 md:right-auto md:left-5 z-30">
+        <div className="hidden md:block absolute top-5 right-auto left-5 z-30">
           <ReleaseNotesBell />
         </div>
 

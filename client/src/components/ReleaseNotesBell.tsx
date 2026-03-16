@@ -129,10 +129,10 @@ export default function ReleaseNotesBell() {
       </button>
 
       {isOpen && (
-        <div className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px] p-2 sm:p-4 md:p-6 overflow-y-auto">
-          <div className="relative mx-auto my-auto w-full max-w-5xl bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-2xl overflow-hidden h-[calc(100dvh-1rem)] sm:h-[calc(100dvh-2rem)] md:h-[min(85dvh,820px)]">
+        <div className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px] p-2 sm:p-4 md:p-6 lg:p-8 overflow-y-auto flex items-start sm:items-center justify-center">
+          <div className="relative w-full max-w-5xl xl:max-w-6xl bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-2xl overflow-hidden h-[calc(100dvh-1rem)] sm:h-[min(92dvh,780px)] md:h-[min(86dvh,820px)] lg:h-[min(84dvh,860px)] my-0 sm:my-auto">
             <div className="h-full flex flex-col md:grid md:grid-cols-[320px_minmax(0,1fr)]">
-              <aside className="border-b md:border-b-0 md:border-l border-slate-200 bg-slate-50/80 p-3 sm:p-4 flex flex-col max-h-[42dvh] md:max-h-none min-h-0">
+              <aside className="border-b md:border-b-0 md:border-l border-slate-200 bg-slate-50/80 p-3 sm:p-4 flex flex-col max-h-[40dvh] sm:max-h-[42dvh] md:max-h-none min-h-0">
                 <div className="flex items-center justify-between gap-2 mb-4">
                   <h3 className="font-black text-slate-900 flex items-center gap-2">
                     <Sparkles size={18} className="text-indigo-600" />
