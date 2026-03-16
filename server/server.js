@@ -11,6 +11,7 @@ import { randomBytes } from 'crypto';
 import webpush from 'web-push';
 import cron from 'node-cron';
 import { runPrismaBootstrap } from './scripts/prisma-bootstrap.mjs';
+import { findTopUserMatches, normalizeArabicName, toAsciiDigits } from './utils/sim-card-name-matcher.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -4367,48 +4368,42 @@ async function startServer() {
         select: { id: true, name: true }
       });
 
+      const scoredUsers = users.map((user) => ({
+        id: user.id,
+        name: user.name,
+        normalizedName: normalizeArabicName(user.name),
+      }));
+
       const lines = text.split('\n').filter(l => l.trim());
       const parsedResults = lines.map(line => {
         const cleanLine = line.trim();
-        // Regex to find Serial (14+ digits) and Phone (01 followed by 9 digits)
-        const serialMatch = cleanLine.match(/(\d{14,})/);
-        const phoneMatch = cleanLine.match(/(01\d{9})/);
+        const lineWithAsciiDigits = toAsciiDigits(cleanLine);
+        // Serial: 14+ digits. Phone: Egyptian mobile with optional +2/2 prefix.
+        const serialMatch = lineWithAsciiDigits.match(/(?<!\d)\d{14,}(?!\d)/);
+        const phoneMatch = lineWithAsciiDigits.match(/(?<!\d)(?:\+?2)?(01\d{9})(?!\d)/);
         
         const serial = serialMatch ? serialMatch[0] : null;
-        const phone = phoneMatch ? phoneMatch[0] : null;
+        const phone = phoneMatch ? phoneMatch[1] : null;
         
-        // Remove serial, phone and trailing numbers (like ID 195) from name
-        let namePart = cleanLine;
+        // Remove serial, phone and trailing numeric IDs from name.
+        let namePart = lineWithAsciiDigits;
         if (serial) namePart = namePart.replace(serial, '');
-        if (phone) namePart = namePart.replace(phone, '');
-        // Remove trailing numbers that are likely IDs (1-4 digits at end)
+        if (phoneMatch?.[0]) namePart = namePart.replace(phoneMatch[0], '');
         namePart = namePart.replace(/\s+\d{1,4}$/, '');
-        const name = namePart.replace(/[^\u0600-\u06FFa-zA-Z\s]/g, '').trim();
+        const name = normalizeArabicName(namePart);
 
-        // Find best match
-        let bestMatch = null;
-        let maxScore = 0;
-
-        if (name) {
-          const tokens1 = name.toLowerCase().split(/\s+/).filter(t => t.length > 2);
-          users.forEach(user => {
-            const tokens2 = user.name.toLowerCase().split(/\s+/).filter(t => t.length > 2);
-            if (tokens2.length === 0) return;
-            
-            const intersection = tokens1.filter(t => tokens2.some(t2 => t2.includes(t) || t.includes(t2)));
-            const score = intersection.length / Math.max(tokens1.length, tokens2.length);
-            
-            if (score > maxScore && score > 0.3) { // Threshold
-              maxScore = score;
-              bestMatch = { id: user.id, name: user.name, score };
-            }
-          });
-        }
+        const topMatches = name
+          ? findTopUserMatches(name, scoredUsers, { threshold: 0.45, limit: 5 })
+          : [];
+        const bestMatch = topMatches[0]
+          ? { id: topMatches[0].id, name: topMatches[0].name, score: topMatches[0].score }
+          : null;
 
         return {
           raw: cleanLine,
           parsed: { name, serial, phone },
-          match: bestMatch
+          match: bestMatch,
+          topMatches
         };
       });
 

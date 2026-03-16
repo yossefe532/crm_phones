@@ -34,6 +34,11 @@ interface ParsedResult {
     name: string;
     score: number;
   } | null;
+  topMatches?: Array<{
+    id: number;
+    name: string;
+    score: number;
+  }>;
   selectedUserId?: number; // For manual override
 }
 
@@ -80,10 +85,14 @@ export default function SimCards() {
       const { results, users } = response.data;
       
       // Initialize selectedUserId with the best match if score is good enough
-      const initializedResults = results.map((r: ParsedResult) => ({
-        ...r,
-        selectedUserId: r.match ? r.match.id : undefined
-      }));
+      const initializedResults = results.map((r: ParsedResult) => {
+        const bestTopMatch = Array.isArray(r.topMatches) ? r.topMatches[0] : undefined;
+        return {
+          ...r,
+          // Backward compatible: fallback to legacy `match` when `topMatches` is unavailable.
+          selectedUserId: bestTopMatch?.id ?? r.match?.id ?? undefined
+        };
+      });
       
       setParsedData(initializedResults);
       setAvailableUsers(users);
@@ -332,7 +341,13 @@ export default function SimCards() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {parsedData.map((item, index) => (
+                    {parsedData.map((item, index) => {
+                      const topSuggestions = Array.isArray(item.topMatches) && item.topMatches.length > 0
+                        ? item.topMatches.slice(0, 3)
+                        : (item.match ? [item.match] : []);
+                      const topSuggestionIds = new Set(topSuggestions.map((suggestion) => suggestion.id));
+                      const otherUsers = availableUsers.filter((user) => !topSuggestionIds.has(user.id));
+                      return (
                       <tr key={index} className={`hover:bg-slate-50/50 transition-colors ${!item.parsed.serial ? 'bg-red-50/30' : ''}`}>
                         <td className="px-6 py-4">
                           <p className="font-bold text-slate-800">{item.parsed.name || 'اسم غير معروف'}</p>
@@ -351,7 +366,7 @@ export default function SimCards() {
                           </div>
                         </td>
                         <td className="px-6 py-4">
-                          <div className="relative">
+                          <div className="relative mb-2">
                             <select
                               value={item.selectedUserId || ''}
                               onChange={(e) => {
@@ -369,7 +384,18 @@ export default function SimCards() {
                           }`}
                         >
                           <option value="">اختر موظف...</option>
-                          {availableUsers.map(u => (
+                          {topSuggestions.length > 0 && (
+                            <option disabled>──────── أفضل اقتراحات ────────</option>
+                          )}
+                          {topSuggestions.map((u) => (
+                            <option key={u.id} value={u.id}>
+                              {u.name} ({Math.round(u.score * 100)}%)
+                            </option>
+                          ))}
+                          {topSuggestions.length > 0 && otherUsers.length > 0 && (
+                            <option disabled>──────── كل الموظفين ────────</option>
+                          )}
+                          {otherUsers.map(u => (
                             <option key={u.id} value={u.id}>
                               {u.name}
                             </option>
@@ -377,7 +403,33 @@ export default function SimCards() {
                         </select>
                         <UserCheck className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 pointer-events-none" />
                       </div>
-                      {item.match && !item.selectedUserId && (
+                      {topSuggestions.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-2 mt-1">
+                          {topSuggestions.map((suggestion) => (
+                            <button
+                              key={suggestion.id}
+                              type="button"
+                              className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+                                item.selectedUserId === suggestion.id
+                                  ? 'bg-emerald-100 border-emerald-300 text-emerald-700'
+                                  : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
+                              }`}
+                              onClick={() => {
+                                const newParsedData = [...parsedData];
+                                newParsedData[index] = {
+                                  ...newParsedData[index],
+                                  selectedUserId: suggestion.id
+                                };
+                                setParsedData(newParsedData);
+                              }}
+                              title={`درجة التطابق: ${Math.round(suggestion.score * 100)}%`}
+                            >
+                              اقتراح سريع: {suggestion.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {item.match && !item.selectedUserId && topSuggestions.length === 0 && (
                         <div className="flex items-center gap-1 mt-1 cursor-pointer" onClick={() => {
                           const newParsedData = [...parsedData];
                           newParsedData[index] = {
@@ -405,7 +457,7 @@ export default function SimCards() {
                       )}
                     </td>
                   </tr>
-                ))}
+                )})}
               </tbody>
             </table>
           </div>
