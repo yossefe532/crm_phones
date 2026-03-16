@@ -52,6 +52,10 @@ const USER_ROLES = new Set(['ADMIN', 'TEAM_LEAD', 'SALES']);
 const MANAGEABLE_ROLES = new Set(['TEAM_LEAD', 'SALES']);
 const POOL_SOURCE = 'POOL';
 const POOL_STATUS = 'NEW';
+const SAME_DAY_TARGET_STATUS_TRANSITIONS = new Set([
+  'HESITANT->INTERESTED',
+  'INTERESTED->AGREED',
+]);
 const UNKNOWN_LEAD_NAME = 'Unknown';
 const CLAIM_TIMEOUT_MINUTES = 15;
 const MAX_TEAM_LEADS_PER_TEAM = 2;
@@ -3489,6 +3493,14 @@ async function startServer() {
         return res.status(403).json({ error: 'Access denied' });
       }
 
+      const hasStatusUpdate = Object.prototype.hasOwnProperty.call(req.body, 'status');
+      const nextStatus = hasStatusUpdate ? status : existingLead.status;
+      const shouldSyncSameDayTransition =
+        !logCall
+        && hasStatusUpdate
+        && (req.user.role === 'SALES' || req.user.role === 'TEAM_LEAD')
+        && SAME_DAY_TARGET_STATUS_TRANSITIONS.has(`${existingLead.status}->${nextStatus}`);
+
       const lead = await prisma.$transaction(async (tx) => {
         const updatedLead = await tx.lead.update({
           where: { id: leadId },
@@ -3502,6 +3514,33 @@ async function startServer() {
           }
         });
 
+        let hasInteractionMutation = false;
+        if (shouldSyncSameDayTransition) {
+          const { start, end } = buildDayRange();
+          const interactionToSync = await tx.interaction.findFirst({
+            where: {
+              leadId,
+              userId: req.user.id,
+              type: { in: ['CALL', 'SEND'] },
+              date: { gte: start, lt: end },
+            },
+            orderBy: { date: 'desc' },
+            select: { id: true },
+          });
+
+          if (interactionToSync) {
+            await tx.interaction.update({
+              where: { id: interactionToSync.id },
+              data: {
+                outcome: status || null,
+                date: new Date(),
+                ...(Object.prototype.hasOwnProperty.call(req.body, 'notes') ? { notes: notes || null } : {}),
+              },
+            });
+            hasInteractionMutation = true;
+          }
+        }
+
         if (logCall && (req.user.role === 'SALES' || req.user.role === 'TEAM_LEAD')) {
           await tx.interaction.create({
             data: {
@@ -3512,6 +3551,10 @@ async function startServer() {
               notes: notes || null,
             },
           });
+          hasInteractionMutation = true;
+        }
+
+        if (hasInteractionMutation) {
           checkTargetCompletion(req.user.id).catch(() => {});
           maybeSendLowApprovalAlert(req.user.id).catch(() => {});
           broadcastTenantEvent(req.user?.tenantId, 'invalidate', {

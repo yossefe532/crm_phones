@@ -29,7 +29,7 @@ export default function Layout() {
           <div className="w-8" />
         </header>
 
-        <div className="absolute top-4 left-4 md:top-5 md:left-5 z-20">
+        <div className="absolute top-3 right-3 md:top-5 md:right-auto md:left-5 z-30">
           <ReleaseNotesBell />
         </div>
 

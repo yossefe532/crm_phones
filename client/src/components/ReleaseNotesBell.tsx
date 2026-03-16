@@ -117,22 +117,22 @@ export default function ReleaseNotesBell() {
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="relative p-2 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-colors"
+        className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 transition-colors sm:h-10 sm:w-10"
         title="تحديثات النظام"
       >
         <Bell size={20} />
         {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full bg-red-500 text-white text-[11px] font-black flex items-center justify-center">
+          <span className="absolute -top-1.5 -right-1.5 min-w-5 h-5 px-1 rounded-full bg-red-500 text-white text-[11px] font-black flex items-center justify-center">
             {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         )}
       </button>
 
       {isOpen && (
-        <div className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px] flex items-center justify-center p-3 md:p-6">
-          <div className="w-full max-w-5xl h-[85vh] bg-white rounded-3xl border border-slate-200 shadow-2xl overflow-hidden relative">
-            <div className="h-full grid md:grid-cols-[320px_1fr]">
-              <aside className="border-l border-slate-200 bg-slate-50/80 p-4 flex flex-col">
+        <div className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px] p-2 sm:p-4 md:p-6 overflow-y-auto">
+          <div className="relative mx-auto my-auto w-full max-w-5xl bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-2xl overflow-hidden h-[calc(100dvh-1rem)] sm:h-[calc(100dvh-2rem)] md:h-[min(85dvh,820px)]">
+            <div className="h-full flex flex-col md:grid md:grid-cols-[320px_minmax(0,1fr)]">
+              <aside className="border-b md:border-b-0 md:border-l border-slate-200 bg-slate-50/80 p-3 sm:p-4 flex flex-col max-h-[42dvh] md:max-h-none min-h-0">
                 <div className="flex items-center justify-between gap-2 mb-4">
                   <h3 className="font-black text-slate-900 flex items-center gap-2">
                     <Sparkles size={18} className="text-indigo-600" />
@@ -150,11 +150,11 @@ export default function ReleaseNotesBell() {
                   type="button"
                   onClick={() => void handleMarkAllAsRead()}
                   disabled={markingAll || !notes.some((n) => !n.isRead)}
-                  className="mb-3 px-3 py-2 rounded-lg text-xs font-bold bg-indigo-100 text-indigo-700 disabled:opacity-50"
+                  className="mb-3 px-3 py-2 rounded-lg text-xs font-bold bg-indigo-100 text-indigo-700 disabled:opacity-50 shrink-0"
                 >
                   {markingAll ? 'جارٍ التحديد كمقروء...' : 'تحديد الكل كمقروء'}
                 </button>
-                <div className="overflow-y-auto space-y-2 pr-1">
+                <div className="overflow-y-auto space-y-2 pr-1 min-h-0 flex-1">
                   {loading ? (
                     <div className="text-sm text-slate-500 p-3">جاري تحميل التحديثات...</div>
                   ) : !notes.length ? (
@@ -184,7 +184,7 @@ export default function ReleaseNotesBell() {
                 </div>
               </aside>
 
-              <section className="p-6 md:p-8 overflow-y-auto">
+              <section className="p-4 sm:p-5 md:p-8 overflow-y-auto flex-1 min-h-0">
                 {error && (
                   <div className="mb-4 rounded-xl bg-red-50 border border-red-100 text-red-700 p-3 text-sm">{error}</div>
                 )}
@@ -217,8 +217,8 @@ export default function ReleaseNotesBell() {
             </div>
 
             {showGuide && (
-              <div className="absolute inset-0 bg-slate-950/65 backdrop-blur-sm flex items-center justify-center p-4">
-                <div className="w-full max-w-xl bg-white rounded-2xl p-6 md:p-7 shadow-2xl border border-slate-200 overflow-hidden">
+              <div className="absolute inset-0 bg-slate-950/65 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+                <div className="w-full max-w-xl max-h-[90%] bg-white rounded-2xl p-5 sm:p-6 md:p-7 shadow-2xl border border-slate-200 overflow-y-auto">
                   <div className="mb-5 flex items-center justify-between">
                     <h4 className="font-black text-slate-900">دليل سريع للتحديثات</h4>
                     <button
