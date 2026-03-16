@@ -56,6 +56,7 @@ const UNKNOWN_LEAD_NAME = 'Unknown';
 const CLAIM_TIMEOUT_MINUTES = 15;
 const MAX_TEAM_LEADS_PER_TEAM = 2;
 const DEFAULT_TEMPLATES = [
+  { status: 'INTERESTED', content: 'شكراً يا {customer_title} {customer_name} على اهتمامك. مع حضرتك {user_name}، وهبعت لك التفاصيل كاملة وخطوة المتابعة القادمة.' },
   { status: 'AGREED', content: 'السلام عليكم {customer_title} {customer_name}، مع حضرتك {user_name} من إيديكون. تم تأكيد موافقتك، وبرجاء إرسال التفاصيل النهائية.' },
   { status: 'REJECTED', content: 'شكراً لوقتك {customer_title} {customer_name}، نتمنى لك التوفيق.' },
   { status: 'HESITANT', content: 'السلام عليكم {customer_title} {customer_name}، مع حضرتك {user_name}. حبيت أتابع مع حضرتك لو في أي استفسار.' },
@@ -66,12 +67,81 @@ const DEFAULT_TEMPLATES = [
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '';
 const allowedOrigins = CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean);
 const ASSISTANT_TRAINING_FILE = join(__dirname, 'assistant-training.json');
+const MAINTENANCE_STATE_FILE = join(__dirname, 'maintenance-state.json');
+const DEFAULT_MAINTENANCE_MESSAGE = 'النظام تحت الصيانة حالياً. يرجى المحاولة لاحقاً.';
+
+const normalizeMaintenanceMessage = (value) => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, 240);
+};
+
+const createDefaultMaintenanceState = () => ({
+  enabled: false,
+  message: DEFAULT_MAINTENANCE_MESSAGE,
+  updatedAt: null,
+  updatedBy: null,
+});
+
+const loadMaintenanceState = () => {
+  if (!existsSync(MAINTENANCE_STATE_FILE)) return createDefaultMaintenanceState();
+  try {
+    const raw = readFileSync(MAINTENANCE_STATE_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    const enabled = Boolean(parsed?.enabled);
+    const message = normalizeMaintenanceMessage(parsed?.message) || DEFAULT_MAINTENANCE_MESSAGE;
+    const updatedAt = typeof parsed?.updatedAt === 'string' && parsed.updatedAt ? parsed.updatedAt : null;
+    const updatedBy = Number.isInteger(parsed?.updatedBy) ? parsed.updatedBy : null;
+    return { enabled, message, updatedAt, updatedBy };
+  } catch (error) {
+    console.warn('[maintenance] Failed to parse maintenance-state.json, fallback to defaults:', error?.message || error);
+    return createDefaultMaintenanceState();
+  }
+};
+
+const writeMaintenanceState = (state) => {
+  writeFileSync(MAINTENANCE_STATE_FILE, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+};
+
+const buildPublicMaintenanceState = (state) => ({
+  enabled: Boolean(state?.enabled),
+  message: normalizeMaintenanceMessage(state?.message) || DEFAULT_MAINTENANCE_MESSAGE,
+  updatedAt: state?.updatedAt || null,
+});
+
+let maintenanceState = loadMaintenanceState();
+
+const isEssentialRouteDuringMaintenance = (req) => {
+  const method = String(req.method || '').toUpperCase();
+  const path = String(req.originalUrl || '').split('?')[0];
+  if (method === 'GET' && (path === '/api/maintenance/status' || path === '/api/runtime-info')) return true;
+  if (method === 'POST' && path === '/api/auth/login') return true;
+  if ((method === 'PUT' || method === 'PATCH') && path === '/api/admin/maintenance-mode') return true;
+  return false;
+};
+
+const maintenanceModeMiddleware = (req, res, next) => {
+  if (!maintenanceState.enabled) return next();
+  if (isEssentialRouteDuringMaintenance(req)) return next();
+  res.set('Retry-After', '120');
+  return res.status(503).json({
+    error: 'النظام في وضع الصيانة حالياً',
+    code: 'MAINTENANCE_MODE',
+    maintenance: buildPublicMaintenanceState(maintenanceState),
+  });
+};
 
 app.use(cors({
   origin: allowedOrigins.length ? allowedOrigins : true,
 }));
 app.use(express.json({ limit: '10mb' }));
+app.use('/api', maintenanceModeMiddleware);
 console.log(`[runtime] tag=${APP_RUNTIME_TAG} prisma_engine=${process.env.PRISMA_CLIENT_ENGINE_TYPE || 'default'}`);
+
+app.get('/api/maintenance/status', (_req, res) => {
+  res.json({ maintenance: buildPublicMaintenanceState(maintenanceState) });
+});
 
 app.get('/api/runtime-info', (_req, res) => {
   res.json({
@@ -526,6 +596,15 @@ const buildEmployeeProfilePayload = (input = {}, { strictTarget = false } = {}) 
     }
   }
 
+  if (Object.prototype.hasOwnProperty.call(input, 'dailyInterestedTarget')) {
+    const target = parseInteger(input.dailyInterestedTarget);
+    if (target === null || target < 0 || target > 300) {
+      errors.push('dailyInterestedTarget must be an integer between 0 and 300');
+    } else {
+      payload.dailyInterestedTarget = target;
+    }
+  }
+
   return { payload, errors };
 };
 
@@ -554,6 +633,27 @@ const canAccessLeadByScope = ({ actor, lead, userId }) => {
   if (actor.role === 'ADMIN') return true;
   if (actor.role === 'TEAM_LEAD') return lead.teamId === actor.teamId;
   if (actor.role === 'SALES') return lead.teamId === actor.teamId && lead.agentId === userId;
+  return false;
+};
+
+const canUpdateLeadByScope = async ({ actor, lead, userId }) => {
+  if (!actor || !lead) return false;
+  if (!actor.tenantId || lead.tenantId !== actor.tenantId) return false;
+  if (actor.role === 'ADMIN') return true;
+  if (actor.role === 'TEAM_LEAD') return lead.teamId === actor.teamId;
+  if (actor.role === 'SALES') {
+    if (lead.teamId !== actor.teamId) return false;
+    if (lead.agentId === userId) return true;
+    const existingInteraction = await prisma.interaction.findFirst({
+      where: {
+        leadId: lead.id,
+        userId,
+        type: { in: ['CALL', 'SEND'] },
+      },
+      select: { id: true },
+    });
+    return Boolean(existingInteraction);
+  }
   return false;
 };
 
@@ -645,6 +745,40 @@ async function startServer() {
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Login failed' });
+    }
+  });
+
+  app.put('/api/admin/maintenance-mode', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    try {
+      const hasEnabled = Object.prototype.hasOwnProperty.call(req.body || {}, 'enabled');
+      let enabled = maintenanceState.enabled;
+      if (hasEnabled) {
+        if (typeof req.body.enabled !== 'boolean') {
+          return res.status(400).json({ error: 'enabled must be a boolean' });
+        }
+        enabled = req.body.enabled;
+      } else {
+        enabled = !maintenanceState.enabled;
+      }
+
+      const incomingMessage = normalizeMaintenanceMessage(req.body?.message);
+      const message = incomingMessage || maintenanceState.message || DEFAULT_MAINTENANCE_MESSAGE;
+      const nextState = {
+        enabled,
+        message,
+        updatedAt: new Date().toISOString(),
+        updatedBy: req.user.id,
+      };
+      writeMaintenanceState(nextState);
+      maintenanceState = nextState;
+
+      return res.json({
+        message: 'Maintenance mode updated',
+        maintenance: buildPublicMaintenanceState(maintenanceState),
+      });
+    } catch (error) {
+      console.error('[maintenance] Failed to update maintenance mode:', error);
+      return res.status(500).json({ error: 'Failed to update maintenance mode' });
     }
   });
 
@@ -774,7 +908,7 @@ async function startServer() {
   };
 
   const getTodayInteractionCounts = async (userId, { start, end }) => {
-    const [callsCount, approvalsCount] = await Promise.all([
+    const [callsCount, approvalsCount, interestedCount] = await Promise.all([
       prisma.interaction.count({
         where: {
           userId,
@@ -790,8 +924,16 @@ async function startServer() {
           date: { gte: start, lt: end },
         },
       }),
+      prisma.interaction.count({
+        where: {
+          userId,
+          type: { in: ['CALL', 'SEND'] },
+          outcome: 'INTERESTED',
+          date: { gte: start, lt: end },
+        },
+      }),
     ]);
-    return { callsCount, approvalsCount };
+    return { callsCount, approvalsCount, interestedCount };
   };
 
   const buildTenantLeaderboard = async ({ tenantId, start, end }) => {
@@ -805,7 +947,7 @@ async function startServer() {
       },
     });
     const ids = users.map((u) => u.id);
-    const [callsRows, approvalsRows] = ids.length
+    const [callsRows, approvalsRows, interestedRows] = ids.length
       ? await Promise.all([
           prisma.interaction.groupBy({
             by: ['userId'],
@@ -826,14 +968,28 @@ async function startServer() {
             },
             _count: { _all: true },
           }),
+          prisma.interaction.groupBy({
+            by: ['userId'],
+            where: {
+              userId: { in: ids },
+              type: { in: ['CALL', 'SEND'] },
+              outcome: 'INTERESTED',
+              date: { gte: start, lt: end },
+            },
+            _count: { _all: true },
+          }),
         ])
-      : [[], []];
+      : [[], [], []];
 
     const callsMap = callsRows.reduce((acc, row) => {
       acc.set(row.userId, row._count._all || 0);
       return acc;
     }, new Map());
     const approvalsMap = approvalsRows.reduce((acc, row) => {
+      acc.set(row.userId, row._count._all || 0);
+      return acc;
+    }, new Map());
+    const interestedMap = interestedRows.reduce((acc, row) => {
       acc.set(row.userId, row._count._all || 0);
       return acc;
     }, new Map());
@@ -845,9 +1001,11 @@ async function startServer() {
       profile: u.employeeProfile,
       callsToday: callsMap.get(u.id) || 0,
       approvalsToday: approvalsMap.get(u.id) || 0,
+      interestedToday: interestedMap.get(u.id) || 0,
     })).sort((a, b) => {
       if (b.callsToday !== a.callsToday) return b.callsToday - a.callsToday;
-      return b.approvalsToday - a.approvalsToday;
+      if (b.approvalsToday !== a.approvalsToday) return b.approvalsToday - a.approvalsToday;
+      return b.interestedToday - a.interestedToday;
     });
 
     const rankMap = leaderboard.reduce((acc, row, idx) => {
@@ -867,11 +1025,14 @@ async function startServer() {
 
     const callsCount = userRow.callsToday || 0;
     const approvalsCount = userRow.approvalsToday || 0;
+    const interestedCount = userRow.interestedToday || 0;
     const callTarget = userRow.profile?.dailyCallTarget || 30;
     const approvalTarget = userRow.profile?.dailyApprovalTarget || 0;
+    const interestedTarget = userRow.profile?.dailyInterestedTarget || 0;
     const remainingCalls = Math.max(0, callTarget - callsCount);
     const remainingApprovals = Math.max(0, approvalTarget - approvalsCount);
-    if (remainingCalls === 0 && remainingApprovals === 0) return;
+    const remainingInterested = Math.max(0, interestedTarget - interestedCount);
+    if (remainingCalls === 0 && remainingApprovals === 0 && remainingInterested === 0) return;
 
     const rank = rankMap.get(userId) || null;
     const third = leaderboard[2] || null;
@@ -883,6 +1044,7 @@ async function startServer() {
     const parts = [];
     if (remainingCalls > 0) parts.push(`${remainingCalls} مكالمة`);
     if (remainingApprovals > 0) parts.push(`${remainingApprovals} موافقة`);
+    if (remainingInterested > 0) parts.push(`${remainingInterested} مهتم`);
 
     const rankText = rank
       ? (rank <= 3 ? `ترتيبك النهاردة: ${rank} (توب 3)` : `ترتيبك النهاردة: ${rank}`)
@@ -901,6 +1063,7 @@ async function startServer() {
     const body = [
       `مكالمات: ${callsCount}/${callTarget}`,
       `موافقات: ${approvalsCount}/${approvalTarget}`,
+      `مهتمين: ${interestedCount}/${interestedTarget}`,
       `المتبقي: ${parts.join(' و ')}`,
       rankText,
       top3Text,
@@ -980,25 +1143,28 @@ async function startServer() {
 
       const callTarget = user.employeeProfile?.dailyCallTarget || 30;
       const approvalTarget = user.employeeProfile?.dailyApprovalTarget || 0;
+      const interestedTarget = user.employeeProfile?.dailyInterestedTarget || 0;
       const { start, end } = buildDayRange();
-      const { callsCount, approvalsCount } = await getTodayInteractionCounts(userId, { start, end });
+      const { callsCount, approvalsCount, interestedCount } = await getTodayInteractionCounts(userId, { start, end });
 
       const callsSatisfied = callsCount >= callTarget;
       const approvalsSatisfied = approvalsCount >= approvalTarget;
+      const interestedSatisfied = interestedCount >= interestedTarget;
       const justReachedCalls = callsCount === callTarget;
       const justReachedApprovals = approvalTarget > 0 && approvalsCount === approvalTarget;
+      const justReachedInterested = interestedTarget > 0 && interestedCount === interestedTarget;
 
-      if (callsSatisfied && approvalsSatisfied && (justReachedCalls || justReachedApprovals)) {
+      if (callsSatisfied && approvalsSatisfied && interestedSatisfied && (justReachedCalls || justReachedApprovals || justReachedInterested)) {
         await sendPushNotification(user.id, {
           title: 'عاش يا بطل! 🏆',
-          body: `خلصت تارجت النهاردة (مكالمات: ${callsCount}/${callTarget}${approvalTarget > 0 ? ` • موافقات: ${approvalsCount}/${approvalTarget}` : ''}). استمر!`,
+          body: `خلصت تارجت النهاردة (مكالمات: ${callsCount}/${callTarget}${approvalTarget > 0 ? ` • موافقات: ${approvalsCount}/${approvalTarget}` : ''}${interestedTarget > 0 ? ` • مهتمين: ${interestedCount}/${interestedTarget}` : ''}). استمر!`,
           icon: '/icon-192.png',
         });
 
         if (user.team?.leadId) {
           await sendPushNotification(user.team.leadId, {
             title: 'واحد من فريقك خلص! 🚀',
-            body: `الموظف ${user.name} خلص تارجته النهاردة (مكالمات: ${callsCount}/${callTarget}${approvalTarget > 0 ? ` • موافقات: ${approvalsCount}/${approvalTarget}` : ''}).`,
+            body: `الموظف ${user.name} خلص تارجته النهاردة (مكالمات: ${callsCount}/${callTarget}${approvalTarget > 0 ? ` • موافقات: ${approvalsCount}/${approvalTarget}` : ''}${interestedTarget > 0 ? ` • مهتمين: ${interestedCount}/${interestedTarget}` : ''}).`,
             icon: '/icon-192.png',
           });
         }
@@ -1100,6 +1266,7 @@ async function startServer() {
                 employeeProfile: {
                   create: {
                     dailyCallTarget: 30,
+                    dailyInterestedTarget: 0,
                     ...profilePayload,
                   },
                 },
@@ -1583,6 +1750,7 @@ async function startServer() {
                 employeeProfile: {
                   create: {
                     dailyCallTarget: 30,
+                    dailyInterestedTarget: 0,
                     ...profilePayload,
                   },
                 },
@@ -3285,6 +3453,11 @@ async function startServer() {
     if (typeof logCall !== 'undefined' && typeof logCall !== 'boolean') {
       return res.status(400).json({ error: 'logCall must be boolean' });
     }
+    const hasName = Object.prototype.hasOwnProperty.call(req.body, 'name');
+    const normalizedName = hasName ? normalizeNullableString(name, 120) : null;
+    if (hasName && !normalizedName) {
+      return res.status(400).json({ error: 'Valid customer name is required' });
+    }
     const hasGender = Object.prototype.hasOwnProperty.call(req.body, 'gender');
     const normalizedGender = hasGender ? normalizeGender(gender) : null;
     if (hasGender && !normalizedGender) {
@@ -3312,7 +3485,7 @@ async function startServer() {
         return res.status(404).json({ error: 'Lead not found' });
       }
 
-      if (!canAccessLeadByScope({ actor, lead: existingLead, userId: req.user.id })) {
+      if (!(await canUpdateLeadByScope({ actor, lead: existingLead, userId: req.user.id }))) {
         return res.status(403).json({ error: 'Access denied' });
       }
 
@@ -3320,10 +3493,9 @@ async function startServer() {
         const updatedLead = await tx.lead.update({
           where: { id: leadId },
           data: {
-            name,
-            ...(typeof name === 'string' ? { hasProvidedName: hasValidProvidedName(name) } : {}),
-            status,
-            notes,
+            ...(hasName ? { name: normalizedName, hasProvidedName: hasValidProvidedName(normalizedName) } : {}),
+            ...(Object.prototype.hasOwnProperty.call(req.body, 'status') ? { status } : {}),
+            ...(Object.prototype.hasOwnProperty.call(req.body, 'notes') ? { notes } : {}),
             ...(hasGender ? { gender: normalizedGender } : {}),
             ...(hasWhatsappPhone ? { whatsappPhone: normalizedWhatsappPhone } : {}),
             ...(hasProfileDetails ? { profileDetails: normalizedProfileDetails } : {}),
@@ -3434,8 +3606,9 @@ async function startServer() {
       const { start, end } = buildDayRange();
       const yesterdayRange = buildDayRangeWithOffset(-1);
       const customerWhere = { ...where, source: { not: POOL_SOURCE } };
-      const [total, agreed, hesitant, rejected, noAnswer, recontact, wrongNumber] = await Promise.all([
+      const [total, interested, agreed, hesitant, rejected, noAnswer, recontact, wrongNumber] = await Promise.all([
         prisma.lead.count({ where: customerWhere }),
+        prisma.lead.count({ where: { ...where, source: { not: POOL_SOURCE }, status: 'INTERESTED' } }),
         prisma.lead.count({ where: { ...where, source: { not: POOL_SOURCE }, status: 'AGREED' } }),
         prisma.lead.count({ where: { ...where, source: { not: POOL_SOURCE }, status: 'HESITANT' } }),
         prisma.lead.count({ where: { ...where, source: { not: POOL_SOURCE }, status: 'REJECTED' } }),
@@ -3448,9 +3621,12 @@ async function startServer() {
       let poolCount = 0;
       let callsToday = 0;
       let callsYesterday = 0;
+      let interestedToday = 0;
+      let interestedYesterday = 0;
       let approvalsToday = 0;
       let approvalsYesterday = 0;
       let dailyCallTarget = null;
+      let dailyInterestedTarget = null;
       let dailyApprovalTarget = null;
       let teamMembersPerformance = [];
       let leaderboard = [];
@@ -3462,7 +3638,7 @@ async function startServer() {
           select: {
             id: true,
             name: true,
-            employeeProfile: { select: { dailyCallTarget: true, dailyApprovalTarget: true } },
+            employeeProfile: { select: { dailyCallTarget: true, dailyApprovalTarget: true, dailyInterestedTarget: true } },
           },
         });
         const tenantSalesIds = allTenantSales.map(m => m.id);
@@ -3487,6 +3663,16 @@ async function startServer() {
           },
           _count: { _all: true },
         }) : [];
+        const tenantInterestedTodayByAgent = tenantSalesIds.length ? await prisma.interaction.groupBy({
+          by: ['userId'],
+          where: {
+            userId: { in: tenantSalesIds },
+            type: { in: ['CALL', 'SEND'] },
+            outcome: 'INTERESTED',
+            date: { gte: start, lt: end },
+          },
+          _count: { _all: true },
+        }) : [];
 
         const tCallsMap = tenantCallsTodayByAgent.reduce((acc, row) => {
           acc[row.userId] = row._count._all;
@@ -3497,17 +3683,24 @@ async function startServer() {
           acc[row.userId] = row._count._all;
           return acc;
         }, {});
+        const tInterestedMap = tenantInterestedTodayByAgent.reduce((acc, row) => {
+          acc[row.userId] = row._count._all;
+          return acc;
+        }, {});
 
         leaderboard = allTenantSales.map(m => ({
           userId: m.id,
           name: m.name,
           callsToday: tCallsMap[m.id] || 0,
           agreedToday: tAgreedMap[m.id] || 0,
+          interestedToday: tInterestedMap[m.id] || 0,
           dailyCallTarget: m.employeeProfile?.dailyCallTarget || 30,
+          dailyInterestedTarget: m.employeeProfile?.dailyInterestedTarget || 0,
           dailyApprovalTarget: m.employeeProfile?.dailyApprovalTarget || 0,
         })).sort((a, b) => {
           // Priority 1: Agreed Today (Descending)
           if (b.agreedToday !== a.agreedToday) return b.agreedToday - a.agreedToday;
+          if (b.interestedToday !== a.interestedToday) return b.interestedToday - a.interestedToday;
           // Priority 2: Calls Today (Descending)
           return b.callsToday - a.callsToday;
         });
@@ -3525,7 +3718,7 @@ async function startServer() {
           select: {
             id: true,
             name: true,
-            employeeProfile: { select: { dailyCallTarget: true, dailyApprovalTarget: true, phone: true } },
+            employeeProfile: { select: { dailyCallTarget: true, dailyApprovalTarget: true, dailyInterestedTarget: true, phone: true } },
           },
         });
         const fSalesIds = filteredSales.map(m => m.id);
@@ -3536,24 +3729,28 @@ async function startServer() {
             userId: m.id,
             name: m.name,
             dailyCallTarget: m.employeeProfile?.dailyCallTarget || 30,
+            dailyInterestedTarget: m.employeeProfile?.dailyInterestedTarget || 0,
             dailyApprovalTarget: m.employeeProfile?.dailyApprovalTarget || 0,
             callsToday: stats?.callsToday || 0,
+            interestedToday: stats?.interestedToday || 0,
             agreedToday: stats?.agreedToday || 0,
             phone: m.employeeProfile?.phone || null,
           };
         }).sort((a, b) => {
-          const aDone = a.callsToday >= a.dailyCallTarget && a.agreedToday >= a.dailyApprovalTarget;
-          const bDone = b.callsToday >= b.dailyCallTarget && b.agreedToday >= b.dailyApprovalTarget;
+          const aDone = a.callsToday >= a.dailyCallTarget && a.interestedToday >= a.dailyInterestedTarget && a.agreedToday >= a.dailyApprovalTarget;
+          const bDone = b.callsToday >= b.dailyCallTarget && b.interestedToday >= b.dailyInterestedTarget && b.agreedToday >= b.dailyApprovalTarget;
           if (aDone && !bDone) return -1;
           if (!aDone && bDone) return 1;
           // Priority 1: Agreed Today (Descending)
           if (b.agreedToday !== a.agreedToday) return b.agreedToday - a.agreedToday;
+          if (b.interestedToday !== a.interestedToday) return b.interestedToday - a.interestedToday;
           // Priority 2: Calls Today (Descending)
           return b.callsToday - a.callsToday;
         });
       } else if (actor.role === 'SALES') {
         const profile = await ensureEmployeeProfile(req.user.id);
         dailyCallTarget = profile.dailyCallTarget;
+        dailyInterestedTarget = profile.dailyInterestedTarget || 0;
         dailyApprovalTarget = profile.dailyApprovalTarget || 0;
         callsToday = await prisma.interaction.count({
           where: {
@@ -3568,6 +3765,15 @@ async function startServer() {
             userId: req.user.id,
             type: { in: ['CALL', 'SEND'] },
             outcome: 'AGREED',
+            date: { gte: start, lt: end },
+            lead: { tenantId: actor.tenantId },
+          },
+        });
+        interestedToday = await prisma.interaction.count({
+          where: {
+            userId: req.user.id,
+            type: { in: ['CALL', 'SEND'] },
+            outcome: 'INTERESTED',
             date: { gte: start, lt: end },
             lead: { tenantId: actor.tenantId },
           },
@@ -3589,17 +3795,27 @@ async function startServer() {
             lead: { tenantId: actor.tenantId },
           },
         });
+        interestedYesterday = await prisma.interaction.count({
+          where: {
+            userId: req.user.id,
+            type: { in: ['CALL', 'SEND'] },
+            outcome: 'INTERESTED',
+            date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
+            lead: { tenantId: actor.tenantId },
+          },
+        });
       } else if (actor.role === 'TEAM_LEAD') {
         const teamMembers = await prisma.user.findMany({
           where: { role: 'SALES', teamId: actor.teamId || -1, tenantId: actor.tenantId },
           select: {
             id: true,
             name: true,
-            employeeProfile: { select: { dailyCallTarget: true, dailyApprovalTarget: true, phone: true } },
+            employeeProfile: { select: { dailyCallTarget: true, dailyApprovalTarget: true, dailyInterestedTarget: true, phone: true } },
           },
         });
         const salesIds = teamMembers.map((member) => member.id);
         dailyCallTarget = teamMembers.reduce((sum, member) => sum + (member.employeeProfile?.dailyCallTarget || 30), 0);
+        dailyInterestedTarget = teamMembers.reduce((sum, member) => sum + (member.employeeProfile?.dailyInterestedTarget || 0), 0);
         dailyApprovalTarget = teamMembers.reduce((sum, member) => sum + (member.employeeProfile?.dailyApprovalTarget || 0), 0);
         
         teamMembersPerformance = teamMembers.map((m) => {
@@ -3608,23 +3824,27 @@ async function startServer() {
             userId: m.id,
             name: m.name,
             dailyCallTarget: m.employeeProfile?.dailyCallTarget || 30,
+            dailyInterestedTarget: m.employeeProfile?.dailyInterestedTarget || 0,
             dailyApprovalTarget: m.employeeProfile?.dailyApprovalTarget || 0,
             callsToday: stats?.callsToday || 0,
+            interestedToday: stats?.interestedToday || 0,
             agreedToday: stats?.agreedToday || 0,
             phone: m.employeeProfile?.phone || null,
           };
         }).sort((a, b) => {
-          const aDone = a.callsToday >= a.dailyCallTarget && a.agreedToday >= a.dailyApprovalTarget;
-          const bDone = b.callsToday >= b.dailyCallTarget && b.agreedToday >= b.dailyApprovalTarget;
+          const aDone = a.callsToday >= a.dailyCallTarget && a.interestedToday >= a.dailyInterestedTarget && a.agreedToday >= a.dailyApprovalTarget;
+          const bDone = b.callsToday >= b.dailyCallTarget && b.interestedToday >= b.dailyInterestedTarget && b.agreedToday >= b.dailyApprovalTarget;
           if (aDone && !bDone) return -1;
           if (!aDone && bDone) return 1;
           // Priority 1: Agreed Today (Descending)
           if (b.agreedToday !== a.agreedToday) return b.agreedToday - a.agreedToday;
+          if (b.interestedToday !== a.interestedToday) return b.interestedToday - a.interestedToday;
           // Priority 2: Calls Today (Descending)
           return b.callsToday - a.callsToday;
         });
 
         callsToday = teamMembersPerformance.reduce((sum, m) => sum + m.callsToday, 0);
+        interestedToday = teamMembersPerformance.reduce((sum, m) => sum + m.interestedToday, 0);
         approvalsToday = teamMembersPerformance.reduce((sum, m) => sum + m.agreedToday, 0);
         
         callsYesterday = salesIds.length
@@ -3646,9 +3866,20 @@ async function startServer() {
               },
             })
           : 0;
+        interestedYesterday = salesIds.length
+          ? await prisma.interaction.count({
+              where: {
+                userId: { in: salesIds },
+                type: { in: ['CALL', 'SEND'] },
+                outcome: 'INTERESTED',
+                date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
+              },
+            })
+          : 0;
         poolCount = await prisma.lead.count({ where: buildPoolWhere({ teamId: actor.teamId, tenantId: actor.tenantId }) });
       }
       const safeTotal = safeCount(total);
+      const safeInterested = safeCount(interested);
       const safeAgreed = safeCount(agreed);
       const safeHesitant = safeCount(hesitant);
       const safeRejected = safeCount(rejected);
@@ -3658,9 +3889,12 @@ async function startServer() {
       const safePoolCount = safeCount(poolCount);
       const safeCallsToday = safeCount(callsToday);
       const safeCallsYesterday = safeCount(callsYesterday);
+      const safeInterestedToday = safeCount(interestedToday);
+      const safeInterestedYesterday = safeCount(interestedYesterday);
       const safeApprovalsToday = safeCount(approvalsToday);
       const safeApprovalsYesterday = safeCount(approvalsYesterday);
       const safeDailyCallTarget = Number.isFinite(dailyCallTarget) && dailyCallTarget > 0 ? dailyCallTarget : null;
+      const safeDailyInterestedTarget = Number.isFinite(dailyInterestedTarget) && dailyInterestedTarget >= 0 ? dailyInterestedTarget : null;
       const safeDailyApprovalTarget = Number.isFinite(dailyApprovalTarget) && dailyApprovalTarget >= 0 ? dailyApprovalTarget : null;
       const callsCompletionRate = safeDailyCallTarget
         ? Math.min(100, Number(((safeCallsToday / safeDailyCallTarget) * 100).toFixed(2)))
@@ -3668,10 +3902,14 @@ async function startServer() {
       const approvalsCompletionRate = safeDailyApprovalTarget !== null && safeDailyApprovalTarget > 0
         ? Math.min(100, Number(((safeApprovalsToday / safeDailyApprovalTarget) * 100).toFixed(2)))
         : 100;
-      const completionRate = callsCompletionRate === null ? null : Math.min(callsCompletionRate, approvalsCompletionRate);
+      const interestedCompletionRate = safeDailyInterestedTarget !== null && safeDailyInterestedTarget > 0
+        ? Math.min(100, Number(((safeInterestedToday / safeDailyInterestedTarget) * 100).toFixed(2)))
+        : 100;
+      const completionRate = callsCompletionRate === null ? null : Math.min(callsCompletionRate, approvalsCompletionRate, interestedCompletionRate);
 
       res.json({
         total: safeTotal,
+        interested: safeInterested,
         agreed: safeAgreed,
         hesitant: safeHesitant,
         rejected: safeRejected,
@@ -3682,10 +3920,14 @@ async function startServer() {
         callsToday: safeCallsToday,
         callsYesterday: safeCallsYesterday,
         dailyCallTarget: safeDailyCallTarget,
+        interestedToday: safeInterestedToday,
+        interestedYesterday: safeInterestedYesterday,
+        dailyInterestedTarget: safeDailyInterestedTarget,
         approvalsToday: safeApprovalsToday,
         approvalsYesterday: safeApprovalsYesterday,
         dailyApprovalTarget: safeDailyApprovalTarget,
         byStatus: {
+          INTERESTED: safeInterested,
           AGREED: safeAgreed,
           HESITANT: safeHesitant,
           REJECTED: safeRejected,
@@ -3698,11 +3940,16 @@ async function startServer() {
           callsYesterday: safeCallsYesterday,
           dailyCallTarget: safeDailyCallTarget,
           remainingCalls: safeDailyCallTarget ? Math.max(0, safeDailyCallTarget - safeCallsToday) : null,
+          interestedToday: safeInterestedToday,
+          interestedYesterday: safeInterestedYesterday,
+          dailyInterestedTarget: safeDailyInterestedTarget,
+          remainingInterested: safeDailyInterestedTarget !== null ? Math.max(0, safeDailyInterestedTarget - safeInterestedToday) : null,
           approvalsToday: safeApprovalsToday,
           approvalsYesterday: safeApprovalsYesterday,
           dailyApprovalTarget: safeDailyApprovalTarget,
           remainingApprovals: safeDailyApprovalTarget !== null ? Math.max(0, safeDailyApprovalTarget - safeApprovalsToday) : null,
           callsCompletionRate,
+          interestedCompletionRate,
           approvalsCompletionRate,
           completionRate,
         },
@@ -3765,6 +4012,7 @@ async function startServer() {
             userId: req.user.id,
             phone: whatsappPhone,
             dailyCallTarget: 30,
+            dailyInterestedTarget: 0,
             department: 'Sales',
             isActive: true,
             timezone: 'Africa/Cairo',
@@ -3802,18 +4050,25 @@ async function startServer() {
     const approvalTarget = Object.prototype.hasOwnProperty.call(req.body, 'dailyApprovalTarget')
       ? parseInteger(req.body.dailyApprovalTarget)
       : parseInteger(req.body.approvalsTarget);
+    const interestedTarget = Object.prototype.hasOwnProperty.call(req.body, 'dailyInterestedTarget')
+      ? parseInteger(req.body.dailyInterestedTarget)
+      : parseInteger(req.body.interestedTarget);
 
     const hasCallTarget = callTarget !== null && typeof callTarget !== 'undefined';
     const hasApprovalTarget = approvalTarget !== null && typeof approvalTarget !== 'undefined';
+    const hasInterestedTarget = interestedTarget !== null && typeof interestedTarget !== 'undefined';
 
-    if (!hasCallTarget && !hasApprovalTarget) {
-      return res.status(400).json({ error: 'dailyCallTarget or dailyApprovalTarget is required' });
+    if (!hasCallTarget && !hasApprovalTarget && !hasInterestedTarget) {
+      return res.status(400).json({ error: 'dailyCallTarget or dailyApprovalTarget or dailyInterestedTarget is required' });
     }
     if (hasCallTarget && (!Number.isInteger(callTarget) || callTarget < 1 || callTarget > 500)) {
       return res.status(400).json({ error: 'Invalid dailyCallTarget value' });
     }
     if (hasApprovalTarget && (!Number.isInteger(approvalTarget) || approvalTarget < 0 || approvalTarget > 200)) {
       return res.status(400).json({ error: 'Invalid dailyApprovalTarget value' });
+    }
+    if (hasInterestedTarget && (!Number.isInteger(interestedTarget) || interestedTarget < 0 || interestedTarget > 300)) {
+      return res.status(400).json({ error: 'Invalid dailyInterestedTarget value' });
     }
 
     try {
@@ -3847,11 +4102,13 @@ async function startServer() {
             update: {
               ...(hasCallTarget ? { dailyCallTarget: callTarget } : {}),
               ...(hasApprovalTarget ? { dailyApprovalTarget: approvalTarget } : {}),
+              ...(hasInterestedTarget ? { dailyInterestedTarget: interestedTarget } : {}),
             },
             create: {
               userId,
               ...(hasCallTarget ? { dailyCallTarget: callTarget } : {}),
               ...(hasApprovalTarget ? { dailyApprovalTarget: approvalTarget } : {}),
+              ...(hasInterestedTarget ? { dailyInterestedTarget: interestedTarget } : {}),
               department: 'Sales',
               isActive: true,
               timezone: 'Africa/Cairo',
@@ -3877,7 +4134,7 @@ async function startServer() {
     const employeeId = parseInteger(req.params.id);
     if (employeeId === null) return res.status(400).json({ error: 'Invalid employee id' });
 
-    const { name, email, dailyCallTarget, dailyApprovalTarget, department, jobTitle, phone, isActive, role } = req.body;
+    const { name, email, dailyCallTarget, dailyApprovalTarget, dailyInterestedTarget, department, jobTitle, phone, isActive, role } = req.body;
 
     try {
       const actor = await getCurrentUserScope(req.user.id);
@@ -3908,6 +4165,7 @@ async function startServer() {
       const profileInput = {};
       if (Object.prototype.hasOwnProperty.call(req.body, 'dailyCallTarget')) profileInput.dailyCallTarget = dailyCallTarget;
       if (Object.prototype.hasOwnProperty.call(req.body, 'dailyApprovalTarget')) profileInput.dailyApprovalTarget = dailyApprovalTarget;
+      if (Object.prototype.hasOwnProperty.call(req.body, 'dailyInterestedTarget')) profileInput.dailyInterestedTarget = dailyInterestedTarget;
       if (Object.prototype.hasOwnProperty.call(req.body, 'department')) profileInput.department = department;
       if (Object.prototype.hasOwnProperty.call(req.body, 'jobTitle')) profileInput.jobTitle = jobTitle;
       if (Object.prototype.hasOwnProperty.call(req.body, 'phone')) profileInput.phone = phone;
@@ -3938,6 +4196,7 @@ async function startServer() {
           timezone: 'Africa/Cairo',
           dailyCallTarget: 30,
           dailyApprovalTarget: 0,
+          dailyInterestedTarget: 0,
           department: 'Sales',
           isActive: true,
           ...profilePayload,
@@ -4063,6 +4322,7 @@ async function startServer() {
           timezone: 'Africa/Cairo',
           dailyCallTarget: 30,
           dailyApprovalTarget: 0,
+          dailyInterestedTarget: 0,
           isActive: true,
         },
         callsToday: 0,
@@ -4262,13 +4522,14 @@ async function startServer() {
         const date = new Date(start);
         date.setDate(start.getDate() + i);
         const key = date.toISOString().slice(0, 10);
-        seriesMap.set(key, { date: key, calls: 0, agreed: 0, rejected: 0, hesitant: 0, wrongNumber: 0 });
+        seriesMap.set(key, { date: key, calls: 0, interested: 0, agreed: 0, rejected: 0, hesitant: 0, wrongNumber: 0 });
       }
       interactions.forEach((item) => {
         const key = item.date.toISOString().slice(0, 10);
         const row = seriesMap.get(key);
         if (!row) return;
         row.calls += 1;
+        if (item.outcome === 'INTERESTED') row.interested += 1;
         if (item.outcome === 'AGREED') row.agreed += 1;
         if (item.outcome === 'REJECTED') row.rejected += 1;
         if (item.outcome === 'HESITANT') row.hesitant += 1;
@@ -4276,14 +4537,18 @@ async function startServer() {
       });
       const series = [...seriesMap.values()];
       const totalCalls = series.reduce((sum, row) => sum + row.calls, 0);
+      const totalInterested = series.reduce((sum, row) => sum + row.interested, 0);
       const totalAgreed = series.reduce((sum, row) => sum + row.agreed, 0);
       const callTarget = employee.employeeProfile?.dailyCallTarget || 0;
+      const interestedTarget = employee.employeeProfile?.dailyInterestedTarget || 0;
       const approvalTarget = employee.employeeProfile?.dailyApprovalTarget || 0;
       const totalCallTarget = callTarget * days;
+      const totalInterestedTarget = interestedTarget * days;
       const totalApprovalTarget = approvalTarget * days;
       const callsCompletionRate = totalCallTarget > 0 ? Number(((totalCalls / totalCallTarget) * 100).toFixed(2)) : 0;
+      const interestedCompletionRate = totalInterestedTarget > 0 ? Number(((totalInterested / totalInterestedTarget) * 100).toFixed(2)) : 100;
       const approvalsCompletionRate = totalApprovalTarget > 0 ? Number(((totalAgreed / totalApprovalTarget) * 100).toFixed(2)) : 100;
-      const completionRate = Number(Math.min(callsCompletionRate, approvalsCompletionRate).toFixed(2));
+      const completionRate = Number(Math.min(callsCompletionRate, interestedCompletionRate, approvalsCompletionRate).toFixed(2));
       return res.json({
         employee: {
           id: employee.id,
@@ -4292,19 +4557,23 @@ async function startServer() {
           team: employee.team,
           isActive: employee.employeeProfile?.isActive ?? true,
           dailyCallTarget: callTarget,
+          dailyInterestedTarget: interestedTarget,
           dailyApprovalTarget: approvalTarget,
         },
         periodDays: days,
         totals: {
           calls: totalCalls,
+          interested: totalInterested,
           agreed: totalAgreed,
           rejected: series.reduce((sum, row) => sum + row.rejected, 0),
           hesitant: series.reduce((sum, row) => sum + row.hesitant, 0),
           wrongNumber: series.reduce((sum, row) => sum + row.wrongNumber, 0),
           callTarget: totalCallTarget,
+          interestedTarget: totalInterestedTarget,
           approvalTarget: totalApprovalTarget,
           target: totalCallTarget,
           callsCompletionRate,
+          interestedCompletionRate,
           approvalsCompletionRate,
           completionRate,
         },
@@ -4332,12 +4601,13 @@ async function startServer() {
         include: { team: { select: { name: true } }, employeeProfile: true },
         orderBy: { name: 'asc' },
       });
-      const header = ['name', 'email', 'team', 'dailyCallTarget', 'dailyApprovalTarget', 'department', 'jobTitle', 'phone'];
+      const header = ['name', 'email', 'team', 'dailyCallTarget', 'dailyInterestedTarget', 'dailyApprovalTarget', 'department', 'jobTitle', 'phone'];
       const rows = users.map((user) => [
         user.name,
         user.email,
         user.team?.name || '',
         String(user.employeeProfile?.dailyCallTarget || 0),
+        String(user.employeeProfile?.dailyInterestedTarget || 0),
         String(user.employeeProfile?.dailyApprovalTarget || 0),
         user.employeeProfile?.department || '',
         user.employeeProfile?.jobTitle || '',
@@ -4476,8 +4746,8 @@ async function startServer() {
 
   app.post('/api/suggestions', authenticateToken, async (req, res) => {
     try {
-      const { content } = req.body;
-      if (!content || typeof content !== 'string' || !content.trim()) {
+      const content = normalizeNullableString(req.body?.content, 1500);
+      if (!content) {
         return res.status(400).json({ error: 'Suggestion content is required' });
       }
 
@@ -4488,16 +4758,34 @@ async function startServer() {
 
       const suggestion = await prisma.suggestion.create({
         data: {
-          content: content.trim(),
+          content,
           userId: actor.id,
-          tenantId: actor.tenantId
-        }
+          tenantId: actor.tenantId,
+        },
       });
 
       res.status(201).json(suggestion);
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Failed to submit suggestion' });
+    }
+  });
+
+  app.get('/api/suggestions/mine', authenticateToken, async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const suggestions = await prisma.suggestion.findMany({
+        where: { tenantId: actor.tenantId, userId: actor.id },
+        orderBy: { createdAt: 'desc' },
+      });
+      return res.json(suggestions);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch your suggestions' });
     }
   });
 
@@ -4510,14 +4798,380 @@ async function startServer() {
 
       const suggestions = await prisma.suggestion.findMany({
         where: { tenantId: actor.tenantId },
-        include: { user: { select: { name: true, email: true, role: true } } },
-        orderBy: { createdAt: 'desc' }
+        include: {
+          user: { select: { name: true, email: true, role: true } },
+          answeredBy: { select: { id: true, name: true, email: true } },
+        },
+        orderBy: { createdAt: 'desc' },
       });
 
       res.json(suggestions);
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Failed to fetch suggestions' });
+    }
+  });
+
+  app.patch('/api/admin/suggestions/:id/answer', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const suggestionId = parseInteger(req.params.id);
+    if (suggestionId === null || suggestionId < 1) {
+      return res.status(400).json({ error: 'Invalid suggestion id' });
+    }
+    const answer = normalizeNullableString(req.body?.answer, 2000);
+    if (!answer) {
+      return res.status(400).json({ error: 'Answer is required' });
+    }
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const suggestion = await prisma.suggestion.findFirst({
+        where: { id: suggestionId, tenantId: actor.tenantId },
+        select: { id: true },
+      });
+      if (!suggestion) return res.status(404).json({ error: 'Suggestion not found' });
+
+      const updated = await prisma.suggestion.update({
+        where: { id: suggestionId },
+        data: { answer, answeredAt: new Date(), answeredById: actor.id },
+      });
+      return res.json(updated);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to answer suggestion' });
+    }
+  });
+
+  // --- FAQ Routes ---
+
+  app.get('/api/faqs', authenticateToken, async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const includeUnpublished = String(req.query.includeUnpublished || '').toLowerCase() === 'true';
+      const where = {
+        tenantId: actor.tenantId,
+        ...(includeUnpublished && actor.role === 'ADMIN' ? {} : { isPublished: true }),
+      };
+      const faqs = await prisma.fAQ.findMany({
+        where,
+        include: {
+          createdBy: { select: { id: true, name: true } },
+          updatedBy: { select: { id: true, name: true } },
+        },
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+      });
+      return res.json(faqs);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch FAQs' });
+    }
+  });
+
+  app.post('/api/admin/faqs', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const question = normalizeNullableString(req.body?.question, 500);
+    const answer = normalizeNullableString(req.body?.answer, 4000);
+    const category = normalizeNullableString(req.body?.category, 120);
+    const sortOrder = parseInteger(req.body?.sortOrder) ?? 0;
+    const isPublished = req.body?.isPublished !== false;
+    if (!question || !answer) return res.status(400).json({ error: 'question and answer are required' });
+    if (!Number.isInteger(sortOrder)) return res.status(400).json({ error: 'Invalid sortOrder' });
+
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const created = await prisma.fAQ.create({
+        data: {
+          question,
+          answer,
+          category,
+          sortOrder,
+          isPublished: Boolean(isPublished),
+          tenantId: actor.tenantId,
+          createdById: actor.id,
+          updatedById: actor.id,
+        },
+      });
+      return res.status(201).json(created);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to create FAQ' });
+    }
+  });
+
+  app.put('/api/admin/faqs/:id', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const faqId = parseInteger(req.params.id);
+    if (faqId === null || faqId < 1) return res.status(400).json({ error: 'Invalid FAQ id' });
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const existing = await prisma.fAQ.findFirst({ where: { id: faqId, tenantId: actor.tenantId }, select: { id: true } });
+      if (!existing) return res.status(404).json({ error: 'FAQ not found' });
+
+      const payload = {};
+      if (Object.prototype.hasOwnProperty.call(req.body, 'question')) {
+        const question = normalizeNullableString(req.body?.question, 500);
+        if (!question) return res.status(400).json({ error: 'Invalid question' });
+        payload.question = question;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'answer')) {
+        const answer = normalizeNullableString(req.body?.answer, 4000);
+        if (!answer) return res.status(400).json({ error: 'Invalid answer' });
+        payload.answer = answer;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'category')) {
+        payload.category = normalizeNullableString(req.body?.category, 120);
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'sortOrder')) {
+        const sortOrder = parseInteger(req.body?.sortOrder);
+        if (sortOrder === null) return res.status(400).json({ error: 'Invalid sortOrder' });
+        payload.sortOrder = sortOrder;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'isPublished')) {
+        if (typeof req.body.isPublished !== 'boolean') return res.status(400).json({ error: 'isPublished must be boolean' });
+        payload.isPublished = req.body.isPublished;
+      }
+      payload.updatedById = actor.id;
+
+      const updated = await prisma.fAQ.update({ where: { id: faqId }, data: payload });
+      return res.json(updated);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to update FAQ' });
+    }
+  });
+
+  app.delete('/api/admin/faqs/:id', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const faqId = parseInteger(req.params.id);
+    if (faqId === null || faqId < 1) return res.status(400).json({ error: 'Invalid FAQ id' });
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const deleted = await prisma.fAQ.deleteMany({ where: { id: faqId, tenantId: actor.tenantId } });
+      if (!deleted.count) return res.status(404).json({ error: 'FAQ not found' });
+      return res.json({ message: 'FAQ deleted successfully' });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to delete FAQ' });
+    }
+  });
+
+  // --- Release Notes Routes ---
+
+  app.get('/api/release-notes', authenticateToken, async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const includeUnpublished = String(req.query.includeUnpublished || '').toLowerCase() === 'true';
+      const where = {
+        tenantId: actor.tenantId,
+        ...(includeUnpublished && actor.role === 'ADMIN' ? {} : { isPublished: true }),
+      };
+      const notes = await prisma.releaseNote.findMany({
+        where,
+        include: {
+          createdBy: { select: { id: true, name: true } },
+          reads: {
+            where: { userId: actor.id },
+            select: { id: true, readAt: true },
+          },
+        },
+        orderBy: [{ publishedAt: 'desc' }, { createdAt: 'desc' }],
+      });
+      const withReadState = notes.map((note) => ({
+        ...note,
+        isRead: note.reads.length > 0,
+        readAt: note.reads[0]?.readAt || null,
+      }));
+      return res.json(withReadState);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch release notes' });
+    }
+  });
+
+  app.get('/api/release-notes/unread-count', authenticateToken, async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const [total, reads] = await Promise.all([
+        prisma.releaseNote.count({ where: { tenantId: actor.tenantId, isPublished: true } }),
+        prisma.releaseNoteRead.count({ where: { userId: actor.id, releaseNote: { tenantId: actor.tenantId, isPublished: true } } }),
+      ]);
+      return res.json({ unreadCount: Math.max(0, total - reads) });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to calculate unread count' });
+    }
+  });
+
+  app.post('/api/release-notes/:id/read', authenticateToken, async (req, res) => {
+    const releaseNoteId = parseInteger(req.params.id);
+    if (releaseNoteId === null || releaseNoteId < 1) return res.status(400).json({ error: 'Invalid release note id' });
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const note = await prisma.releaseNote.findFirst({
+        where: { id: releaseNoteId, tenantId: actor.tenantId, isPublished: true },
+        select: { id: true },
+      });
+      if (!note) return res.status(404).json({ error: 'Release note not found' });
+
+      const read = await prisma.releaseNoteRead.upsert({
+        where: { releaseNoteId_userId: { releaseNoteId, userId: actor.id } },
+        update: { readAt: new Date() },
+        create: { releaseNoteId, userId: actor.id },
+      });
+      return res.json(read);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to mark release note as read' });
+    }
+  });
+
+  app.post('/api/release-notes/read-all', authenticateToken, async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const notes = await prisma.releaseNote.findMany({
+        where: { tenantId: actor.tenantId, isPublished: true },
+        select: { id: true },
+      });
+      const now = new Date();
+      const operations = notes.map((note) =>
+        prisma.releaseNoteRead.upsert({
+          where: { releaseNoteId_userId: { releaseNoteId: note.id, userId: actor.id } },
+          update: { readAt: now },
+          create: { releaseNoteId: note.id, userId: actor.id, readAt: now },
+        }),
+      );
+      if (operations.length) await prisma.$transaction(operations);
+      return res.json({ marked: operations.length });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to mark all release notes as read' });
+    }
+  });
+
+  app.post('/api/admin/release-notes', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const title = normalizeNullableString(req.body?.title, 200);
+    const body = normalizeNullableString(req.body?.body, 10000);
+    const version = normalizeNullableString(req.body?.version, 60);
+    const isPublished = req.body?.isPublished !== false;
+    const publishedAt = parseDateTime(req.body?.publishedAt) || new Date();
+    if (!title || !body) return res.status(400).json({ error: 'title and body are required' });
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const created = await prisma.releaseNote.create({
+        data: {
+          title,
+          body,
+          version,
+          isPublished: Boolean(isPublished),
+          publishedAt,
+          tenantId: actor.tenantId,
+          createdById: actor.id,
+        },
+      });
+      return res.status(201).json(created);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to create release note' });
+    }
+  });
+
+  app.put('/api/admin/release-notes/:id', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const releaseNoteId = parseInteger(req.params.id);
+    if (releaseNoteId === null || releaseNoteId < 1) return res.status(400).json({ error: 'Invalid release note id' });
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const existing = await prisma.releaseNote.findFirst({ where: { id: releaseNoteId, tenantId: actor.tenantId }, select: { id: true } });
+      if (!existing) return res.status(404).json({ error: 'Release note not found' });
+
+      const payload = {};
+      if (Object.prototype.hasOwnProperty.call(req.body, 'title')) {
+        const title = normalizeNullableString(req.body?.title, 200);
+        if (!title) return res.status(400).json({ error: 'Invalid title' });
+        payload.title = title;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'body')) {
+        const body = normalizeNullableString(req.body?.body, 10000);
+        if (!body) return res.status(400).json({ error: 'Invalid body' });
+        payload.body = body;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'version')) {
+        payload.version = normalizeNullableString(req.body?.version, 60);
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'isPublished')) {
+        if (typeof req.body.isPublished !== 'boolean') return res.status(400).json({ error: 'isPublished must be boolean' });
+        payload.isPublished = req.body.isPublished;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'publishedAt')) {
+        const publishedAt = parseDateTime(req.body?.publishedAt);
+        if (!publishedAt) return res.status(400).json({ error: 'Invalid publishedAt' });
+        payload.publishedAt = publishedAt;
+      }
+
+      const updated = await prisma.releaseNote.update({
+        where: { id: releaseNoteId },
+        data: payload,
+      });
+      return res.json(updated);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to update release note' });
+    }
+  });
+
+  app.delete('/api/admin/release-notes/:id', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    const releaseNoteId = parseInteger(req.params.id);
+    if (releaseNoteId === null || releaseNoteId < 1) return res.status(400).json({ error: 'Invalid release note id' });
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const deleted = await prisma.releaseNote.deleteMany({ where: { id: releaseNoteId, tenantId: actor.tenantId } });
+      if (!deleted.count) return res.status(404).json({ error: 'Release note not found' });
+      return res.json({ message: 'Release note deleted successfully' });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to delete release note' });
     }
   });
 
@@ -4781,7 +5435,8 @@ async function startServer() {
       for (const user of salesUsers) {
         const callTarget = user.employeeProfile?.dailyCallTarget || 30;
         const approvalTarget = user.employeeProfile?.dailyApprovalTarget || 0;
-        const [callsCount, approvalsCount] = await Promise.all([
+        const interestedTarget = user.employeeProfile?.dailyInterestedTarget || 0;
+        const [callsCount, approvalsCount, interestedCount] = await Promise.all([
           prisma.interaction.count({
             where: {
               userId: user.id,
@@ -4797,15 +5452,25 @@ async function startServer() {
               date: { gte: start, lt: end },
             },
           }),
+          prisma.interaction.count({
+            where: {
+              userId: user.id,
+              type: { in: ['CALL', 'SEND'] },
+              outcome: 'INTERESTED',
+              date: { gte: start, lt: end },
+            },
+          }),
         ]);
 
         const remainingCalls = Math.max(0, callTarget - callsCount);
         const remainingApprovals = Math.max(0, approvalTarget - approvalsCount);
+        const remainingInterested = Math.max(0, interestedTarget - interestedCount);
 
-        if (remainingCalls > 0 || remainingApprovals > 0) {
+        if (remainingCalls > 0 || remainingApprovals > 0 || remainingInterested > 0) {
           const parts = [];
           if (remainingCalls > 0) parts.push(`${remainingCalls} مكالمة`);
           if (remainingApprovals > 0) parts.push(`${remainingApprovals} موافقة`);
+          if (remainingInterested > 0) parts.push(`${remainingInterested} مهتم`);
           await sendPushNotification(user.id, {
             title: 'تذكير بالهدف اليومي 🎯',
             body: `فاضلك ${parts.join(' و ')} عشان تخلص التارجت بتاعك النهاردة. شد حيلك!`,
@@ -4880,7 +5545,8 @@ async function startServer() {
         for (const member of teamMembers) {
           const callTarget = member.employeeProfile?.dailyCallTarget || 30;
           const approvalTarget = member.employeeProfile?.dailyApprovalTarget || 0;
-          const [callsCount, approvalsCount] = await Promise.all([
+          const interestedTarget = member.employeeProfile?.dailyInterestedTarget || 0;
+          const [callsCount, approvalsCount, interestedCount] = await Promise.all([
             prisma.interaction.count({
               where: {
                 userId: member.id,
@@ -4896,9 +5562,17 @@ async function startServer() {
                 date: { gte: start, lt: end },
               },
             }),
+            prisma.interaction.count({
+              where: {
+                userId: member.id,
+                type: { in: ['CALL', 'SEND'] },
+                outcome: 'INTERESTED',
+                date: { gte: start, lt: end },
+              },
+            }),
           ]);
 
-          const done = callsCount >= callTarget && approvalsCount >= approvalTarget;
+          const done = callsCount >= callTarget && approvalsCount >= approvalTarget && interestedCount >= interestedTarget;
           if (done) achieved++;
           else {
             missed++;

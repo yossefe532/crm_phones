@@ -33,3 +33,105 @@
     @apply min-h-11;
   }
 }
+
+@keyframes maintenance-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes maintenance-blink {
+  0%,
+  45%,
+  100% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scaleY(0.15);
+    opacity: 0.7;
+  }
+}
+
+@keyframes maintenance-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.maintenance-robot {
+  position: relative;
+  width: 120px;
+  animation: maintenance-float 2.2s ease-in-out infinite;
+}
+
+.maintenance-robot__antenna {
+  width: 4px;
+  height: 16px;
+  margin: 0 auto;
+  background: #cbd5e1;
+  border-radius: 9999px;
+  position: relative;
+}
+
+.maintenance-robot__antenna::after {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  background: #22d3ee;
+  border-radius: 9999px;
+  transform: translateX(-50%);
+  box-shadow: 0 0 12px #22d3ee;
+}
+
+.maintenance-robot__head {
+  margin: 4px auto 0;
+  width: 78px;
+  height: 52px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #dbeafe, #93c5fd);
+  border: 2px solid #bfdbfe;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.maintenance-robot__eye {
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background: #0f172a;
+  animation: maintenance-blink 2.8s ease-in-out infinite;
+}
+
+.maintenance-robot__body {
+  margin: 8px auto 0;
+  width: 95px;
+  height: 70px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #60a5fa, #1d4ed8);
+  border: 2px solid #93c5fd;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.maintenance-robot__gear {
+  width: 24px;
+  height: 24px;
+  border: 4px dashed #dbeafe;
+  border-radius: 9999px;
+  display: block;
+  animation: maintenance-spin 1.8s linear infinite;
+}

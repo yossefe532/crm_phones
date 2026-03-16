@@ -87,6 +87,7 @@ export default function Templates() {
 
   const getStatusLabel = (status: string) => {
     switch (status) {
+      case 'INTERESTED': return 'مهتم (Interested)';
       case 'AGREED': return 'تم الاتفاق (Agreed)';
       case 'REJECTED': return 'تم الرفض (Rejected)';
       case 'HESITANT': return 'متردد (Hesitant)';

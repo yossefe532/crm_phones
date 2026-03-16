@@ -1,4 +1,4 @@
-export const AUTO_MESSAGE_STATUSES = new Set(['AGREED', 'REJECTED', 'HESITANT', 'SPONSOR', 'NO_ANSWER']);
+export const AUTO_MESSAGE_STATUSES = new Set(['INTERESTED', 'AGREED', 'REJECTED', 'HESITANT', 'SPONSOR', 'NO_ANSWER']);
 export type LeadGender = 'MALE' | 'FEMALE' | 'UNKNOWN';
 
 export const formatEgyptPhone = (phone: string) => {

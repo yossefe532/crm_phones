@@ -10,7 +10,9 @@ import {
   User,
   AlertCircle,
   Image,
-  PlayCircle
+  PlayCircle,
+  HelpCircle,
+  ChevronDown
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
@@ -29,7 +31,7 @@ const leadSchema = z.object({
     .refine((value) => !value || EGYPT_MOBILE_REGEX.test(value), 'رقم الواتساب غير صحيح'),
   notes: z.string().optional(),
   profileDetails: z.string().optional(),
-  status: z.enum(['NEW', 'AGREED', 'HESITANT', 'REJECTED', 'SPONSOR', 'NO_ANSWER', 'RECONTACT', 'WRONG_NUMBER']),
+  status: z.enum(['NEW', 'INTERESTED', 'AGREED', 'HESITANT', 'REJECTED', 'SPONSOR', 'NO_ANSWER', 'RECONTACT', 'WRONG_NUMBER']),
   gender: z.enum(['MALE', 'FEMALE', 'UNKNOWN']),
 });
 
@@ -37,6 +39,14 @@ type LeadForm = z.infer<typeof leadSchema>;
 interface StatusTemplate {
   status: string;
   content: string;
+}
+
+interface FaqItem {
+  id: number;
+  question: string;
+  answer: string;
+  category?: string | null;
+  sortOrder: number;
 }
 
 interface ClaimedLeadPayload {
@@ -55,12 +65,13 @@ interface RecontactLeadPayload {
   whatsappPhone?: string;
   notes?: string;
   profileDetails?: string;
-  status?: 'NO_ANSWER' | 'RECONTACT' | 'NEW' | 'AGREED' | 'HESITANT' | 'REJECTED' | 'SPONSOR' | 'WRONG_NUMBER';
+  status?: 'NO_ANSWER' | 'RECONTACT' | 'NEW' | 'INTERESTED' | 'AGREED' | 'HESITANT' | 'REJECTED' | 'SPONSOR' | 'WRONG_NUMBER';
   source?: 'CALL' | 'SEND';
   gender?: 'MALE' | 'FEMALE' | 'UNKNOWN';
 }
 
 export default function AddLead() {
+  const UNKNOWN_NAME_VALUE = 'Unknown';
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -89,7 +100,13 @@ export default function AddLead() {
   const [education, setEducation] = useState('');
   const [goals, setGoals] = useState('');
   const [nameDetectedHint, setNameDetectedHint] = useState('');
+  const [faqItems, setFaqItems] = useState<FaqItem[]>([]);
+  const [faqLoading, setFaqLoading] = useState(true);
+  const [faqError, setFaqError] = useState('');
+  const [openedFaqId, setOpenedFaqId] = useState<number | null>(null);
+  const [showUnknownNameConfirm, setShowUnknownNameConfirm] = useState(false);
   const finalizedRef = useRef(false);
+  const pendingSubmitRef = useRef<LeadForm | null>(null);
 
   const { register, handleSubmit, formState: { errors }, setValue, watch } = useForm<LeadForm>({
     resolver: zodResolver(leadSchema),
@@ -115,6 +132,17 @@ export default function AddLead() {
       } catch {
         setTrainingTopic('');
         setTrainingContext('');
+      }
+      try {
+        setFaqLoading(true);
+        const faqsRes = await api.get('/faqs');
+        setFaqItems(Array.isArray(faqsRes.data) ? faqsRes.data : []);
+        setFaqError('');
+      } catch {
+        setFaqItems([]);
+        setFaqError('تعذر تحميل الأسئلة الشائعة حالياً');
+      } finally {
+        setFaqLoading(false);
       }
 
       const claimId = Number(searchParams.get('claimId') || 0);
@@ -190,7 +218,7 @@ export default function AddLead() {
     };
   }, [claimedLeadId]);
 
-  const onSubmit = async (data: LeadForm) => {
+  const saveLead = async (data: LeadForm) => {
     setSubmitting(true);
     setError('');
     const whatsappTarget = data.whatsappPhone || data.phone;
@@ -242,6 +270,23 @@ export default function AddLead() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const onSubmit = async (data: LeadForm) => {
+    if (data.name.trim().toUpperCase() === 'UNKNOWN') {
+      pendingSubmitRef.current = data;
+      setShowUnknownNameConfirm(true);
+      return;
+    }
+    await saveLead(data);
+  };
+
+  const handleConfirmUnknownName = async () => {
+    const pendingData = pendingSubmitRef.current;
+    setShowUnknownNameConfirm(false);
+    if (!pendingData) return;
+    pendingSubmitRef.current = null;
+    await saveLead(pendingData);
   };
 
   const currentStatus = watch('status');
@@ -415,6 +460,13 @@ export default function AddLead() {
               />
             </div>
             {errors.name && <p className="text-xs text-red-500 mt-1">{errors.name.message}</p>}
+            <button
+              type="button"
+              onClick={() => setValue('name', UNKNOWN_NAME_VALUE, { shouldValidate: true, shouldDirty: true })}
+              className="text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg px-3 py-1.5 transition-colors"
+            >
+              الاسم غير معروف؟ اضغط للحفظ كـ UNKNOWN
+            </button>
           </div>
 
           <div className="space-y-2">
@@ -475,6 +527,7 @@ export default function AddLead() {
           <div className="grid grid-cols-2 md:grid-cols-8 gap-4">
             {[
               { value: 'NEW', label: 'جديد', color: 'bg-slate-100 hover:bg-slate-200 text-slate-700' },
+              { value: 'INTERESTED', label: 'مهتم', color: 'bg-cyan-100 hover:bg-cyan-200 text-cyan-700' },
               { value: 'AGREED', label: 'موافق', color: 'bg-emerald-100 hover:bg-emerald-200 text-emerald-700' },
               { value: 'HESITANT', label: 'متردد', color: 'bg-amber-100 hover:bg-amber-200 text-amber-700' },
               { value: 'REJECTED', label: 'مرفوض', color: 'bg-red-100 hover:bg-red-200 text-red-700' },
@@ -736,6 +789,54 @@ export default function AddLead() {
           )}
         </div>
 
+        <div className="p-5 rounded-2xl border border-amber-100 bg-amber-50/60 space-y-4">
+          <div className="flex items-center gap-2 text-amber-900">
+            <HelpCircle size={18} />
+            <h4 className="text-lg font-bold">FAQ سريع أثناء المكالمة</h4>
+          </div>
+          <p className="text-sm text-amber-800">
+            راجع الإجابات الجاهزة قبل الرد على أسئلة العميل.
+          </p>
+          {faqLoading ? (
+            <div className="text-sm text-slate-500 bg-white border border-amber-100 rounded-xl p-4">جاري تحميل الأسئلة الشائعة...</div>
+          ) : faqError ? (
+            <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl p-4">{faqError}</div>
+          ) : !faqItems.length ? (
+            <div className="text-sm text-slate-500 bg-white border border-amber-100 rounded-xl p-4">لا توجد عناصر FAQ منشورة حالياً.</div>
+          ) : (
+            <div className="space-y-2">
+              {faqItems.map((faq) => {
+                const isOpen = openedFaqId === faq.id;
+                return (
+                  <div key={faq.id} className="bg-white rounded-xl border border-amber-100 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setOpenedFaqId((prev) => (prev === faq.id ? null : faq.id))}
+                      className="w-full px-4 py-3 flex items-center justify-between gap-3 text-right hover:bg-amber-50 transition-colors"
+                    >
+                      <div>
+                        {faq.category ? (
+                          <p className="text-[11px] font-bold text-amber-700 mb-1">{faq.category}</p>
+                        ) : null}
+                        <p className="font-bold text-slate-800 text-sm">{faq.question}</p>
+                      </div>
+                      <ChevronDown
+                        size={18}
+                        className={clsx('text-amber-700 transition-transform', isOpen && 'rotate-180')}
+                      />
+                    </button>
+                    {isOpen && (
+                      <div className="px-4 py-3 border-t border-amber-100 text-sm text-slate-700 whitespace-pre-wrap leading-7">
+                        {faq.answer}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         <div className="flex justify-end pt-6 border-t border-slate-100">
           <button 
             type="submit" 
@@ -753,6 +854,36 @@ export default function AddLead() {
           </button>
         </div>
       </form>
+
+      {showUnknownNameConfirm && (
+        <div className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px] flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 space-y-5">
+            <h3 className="text-xl font-black text-slate-900">تأكيد حفظ الاسم UNKNOWN</h3>
+            <p className="text-sm text-slate-600 leading-7">
+              أنت على وشك حفظ العميل باسم <span className="font-black">UNKNOWN</span>. هل بالفعل الاسم غير متاح حالياً؟
+            </p>
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  pendingSubmitRef.current = null;
+                  setShowUnknownNameConfirm(false);
+                }}
+                className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 font-bold hover:bg-slate-50 transition-colors"
+              >
+                رجوع للتعديل
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleConfirmUnknownName()}
+                className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition-colors"
+              >
+                نعم، احفظ الآن
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

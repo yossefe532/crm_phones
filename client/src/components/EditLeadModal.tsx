@@ -222,9 +222,10 @@ export default function EditLeadModal({ lead, onClose, onUpdate }: Props) {
 
           <div className="space-y-4">
             <label className="text-sm font-bold text-slate-700">تحديث الحالة</label>
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-8 gap-3">
               {[
                 { value: 'NEW', label: 'جديد', color: 'bg-slate-100' },
+                { value: 'INTERESTED', label: 'مهتم', color: 'bg-cyan-100 text-cyan-700' },
                 { value: 'AGREED', label: 'موافق', color: 'bg-emerald-100 text-emerald-700' },
                 { value: 'HESITANT', label: 'متردد', color: 'bg-amber-100 text-amber-700' },
                 { value: 'REJECTED', label: 'مرفوض', color: 'bg-red-100 text-red-700' },

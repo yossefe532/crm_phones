@@ -14,15 +14,18 @@ import PooledNumbers from './pages/admin/PooledNumbers';
 import TeamManagement from './pages/admin/TeamManagement';
 import EmployeePerformance from './pages/admin/EmployeePerformance';
 import SimCards from './pages/admin/SimCards';
+import FaqManagement from './pages/admin/FaqManagement';
 import PrivateRoute from './components/PrivateRoute';
 import AdminRoute from './components/AdminRoute';
 import SuperAdminRoute from './components/SuperAdminRoute';
 import PWAInstallPrompt from './components/PWAInstallPrompt';
+import MaintenanceGate from './components/MaintenanceGate';
 
 function App() {
   return (
     <BrowserRouter>
       <PWAInstallPrompt />
+      <MaintenanceGate />
       <Routes>
         <Route path="/login" element={<Login />} />
         
@@ -45,6 +48,7 @@ function App() {
               <Route element={<SuperAdminRoute />}>
                 <Route path="upload" element={<UploadLeads />} />
                 <Route path="pooled-numbers" element={<PooledNumbers />} />
+                <Route path="faqs" element={<FaqManagement />} />
               </Route>
             </Route>
 

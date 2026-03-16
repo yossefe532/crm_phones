@@ -17,7 +17,8 @@ import {
   Check,
   Loader2,
   Smartphone,
-  Lightbulb
+  Lightbulb,
+  HelpCircle
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from '../../store/useStore';
@@ -78,6 +79,7 @@ export default function Sidebar() {
     { to: '/admin/sim-cards', icon: Smartphone, label: 'خطوط العمل' },
     { to: '/admin/upload', icon: Upload, label: 'رفع داتا أرقام' },
     { to: '/admin/pooled-numbers', icon: Database, label: 'الأرقام المجمعة' },
+    { to: '/admin/faqs', icon: HelpCircle, label: 'إدارة FAQ' },
   ];
   const visibleAdminItems = user?.role === 'TEAM_LEAD'
     ? adminItems.filter((item) => item.to === '/admin/employees' || item.to === '/admin/teams')

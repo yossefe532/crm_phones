@@ -27,6 +27,11 @@ model User {
   managedTeam     Team?            @relation("TeamLead")
   pushSubscriptions PushSubscription[]
   suggestions     Suggestion[]
+  answeredSuggestions Suggestion[]  @relation("SuggestionAnsweredBy")
+  releaseNoteReads ReleaseNoteRead[]
+  createdReleaseNotes ReleaseNote[] @relation("ReleaseNoteCreatedBy")
+  createdFaqs      FAQ[]            @relation("FaqCreatedBy")
+  updatedFaqs      FAQ[]            @relation("FaqUpdatedBy")
 
   @@index([tenantId])
   @@index([teamId])
@@ -137,6 +142,7 @@ model EmployeeProfile {
   timezone         String   @default("Africa/Cairo")
   dailyCallTarget  Int      @default(30)
   dailyApprovalTarget Int   @default(0)
+  dailyInterestedTarget Int @default(0)
   simSerialNumber  String?
   simPhoneNumber   String?
   manualVipLimit   Int?     // If null, use automatic logic based on approvals. If set, use this limit.
@@ -171,6 +177,8 @@ model Tenant {
   leadBatches      LeadBatch[]
   messageTemplates MessageTemplate[]
   suggestions      Suggestion[]
+  faqs             FAQ[]
+  releaseNotes     ReleaseNote[]
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 }
@@ -180,10 +188,66 @@ model Suggestion {
   content   String
   userId    Int
   user      User     @relation(fields: [userId], references: [id])
+  answer    String?
+  answeredAt DateTime?
+  answeredById Int?
+  answeredBy User?   @relation("SuggestionAnsweredBy", fields: [answeredById], references: [id], onDelete: SetNull)
   tenantId  Int
   tenant    Tenant   @relation(fields: [tenantId], references: [id])
   createdAt DateTime @default(now())
 
   @@index([tenantId])
   @@index([userId])
+  @@index([answeredById])
+}
+
+model FAQ {
+  id          Int      @id @default(autoincrement())
+  question    String
+  answer      String
+  category    String?
+  sortOrder   Int      @default(0)
+  isPublished Boolean  @default(true)
+  tenantId    Int
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  createdById Int?
+  createdBy   User?    @relation("FaqCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedById Int?
+  updatedBy   User?    @relation("FaqUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId, isPublished])
+  @@index([tenantId, sortOrder])
+}
+
+model ReleaseNote {
+  id          Int      @id @default(autoincrement())
+  title       String
+  body        String
+  version     String?
+  isPublished Boolean  @default(true)
+  publishedAt DateTime @default(now())
+  tenantId    Int
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  createdById Int?
+  createdBy   User?    @relation("ReleaseNoteCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  reads       ReleaseNoteRead[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId, publishedAt])
+  @@index([tenantId, isPublished])
+}
+
+model ReleaseNoteRead {
+  id            Int         @id @default(autoincrement())
+  releaseNoteId Int
+  releaseNote   ReleaseNote @relation(fields: [releaseNoteId], references: [id], onDelete: Cascade)
+  userId        Int
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  readAt        DateTime    @default(now())
+
+  @@unique([releaseNoteId, userId])
+  @@index([userId, readAt])
 }

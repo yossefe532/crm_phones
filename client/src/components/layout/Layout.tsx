@@ -5,6 +5,7 @@ import { Menu } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import LiveEvents from '../LiveEvents';
 import CoachToasts from '../CoachToasts';
+import ReleaseNotesBell from '../ReleaseNotesBell';
 
 export default function Layout() {
   const { toggleSidebar } = useStore();
@@ -25,8 +26,12 @@ export default function Layout() {
             <Menu size={24} />
           </button>
           <span className="font-bold text-slate-800">أكاديمية إيديكون</span>
-          <div className="w-8" /> {/* Spacer */}
+          <div className="w-8" />
         </header>
+
+        <div className="absolute top-4 left-4 md:top-5 md:left-5 z-20">
+          <ReleaseNotesBell />
+        </div>
 
         <div className="flex-1 overflow-auto p-3 md:p-8 scroll-smooth overscroll-contain">
           <Outlet />

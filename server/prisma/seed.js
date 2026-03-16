@@ -94,6 +94,7 @@ async function main() {
         jobTitle: 'Sales Agent',
         timezone: 'Africa/Cairo',
         dailyCallTarget: 30,
+        dailyInterestedTarget: 5,
         isActive: true,
       },
     });
@@ -101,6 +102,7 @@ async function main() {
 
   // Default Templates
   const defaultTemplates = [
+    { status: 'INTERESTED', content: 'شكراً يا {customer_title} {customer_name} على اهتمامك. مع حضرتك {user_name}، وهبعت لك التفاصيل كاملة وخطوة المتابعة القادمة.' },
     { status: 'AGREED', content: 'السلام عليكم {customer_title} {customer_name}، مع حضرتك {user_name} من إيديكون. تم تأكيد موافقتك، وبرجاء إرسال التفاصيل النهائية.' },
     { status: 'REJECTED', content: 'شكراً لوقتك {customer_title} {customer_name}، نتمنى لك التوفيق.' },
     { status: 'HESITANT', content: 'السلام عليكم {customer_title} {customer_name}، مع حضرتك {user_name}. حبيت أتابع مع حضرتك لو في أي استفسار.' },
@@ -119,6 +121,57 @@ async function main() {
       update: {},
       create: { ...t, tenantId: crmTenant.id },
     });
+  }
+
+  const defaultFaqs = [
+    {
+      question: 'إزاي أبدأ مكالمة جديدة مع عميل؟',
+      answer: 'ادخل على شاشة إضافة عميل، اختار الحالة المناسبة وسجل ملاحظات المكالمة ثم احفظ.',
+      category: 'المكالمات',
+      sortOrder: 1,
+    },
+    {
+      question: 'إمتى أستخدم حالة INTERESTED؟',
+      answer: 'استخدمها لما العميل يوضح اهتمام واضح لكنه لسه ماوصلش لقرار نهائي أو موافقة مكتملة.',
+      category: 'الحالات',
+      sortOrder: 2,
+    },
+    {
+      question: 'فين أقدر أشوف التارجت اليومي؟',
+      answer: 'من لوحة التحكم هتلاقي التارجت اليومي للمكالمات والمهتمين والموافقات والمتبقي منهم.',
+      category: 'التارجت',
+      sortOrder: 3,
+    },
+  ];
+
+  const tenants = [ediconTenant, crmTenant];
+  for (const tenant of tenants) {
+    for (const faq of defaultFaqs) {
+      await prisma.fAQ.upsert({
+        where: {
+          id: (
+            await prisma.fAQ.findFirst({
+              where: { tenantId: tenant.id, question: faq.question },
+              select: { id: true },
+            })
+          )?.id || -1,
+        },
+        update: {
+          answer: faq.answer,
+          category: faq.category,
+          sortOrder: faq.sortOrder,
+          isPublished: true,
+        },
+        create: {
+          tenantId: tenant.id,
+          question: faq.question,
+          answer: faq.answer,
+          category: faq.category,
+          sortOrder: faq.sortOrder,
+          isPublished: true,
+        },
+      });
+    }
   }
 
   console.log({ users });
