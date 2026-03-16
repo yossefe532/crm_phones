@@ -52,10 +52,8 @@ const USER_ROLES = new Set(['ADMIN', 'TEAM_LEAD', 'SALES']);
 const MANAGEABLE_ROLES = new Set(['TEAM_LEAD', 'SALES']);
 const POOL_SOURCE = 'POOL';
 const POOL_STATUS = 'NEW';
-const SAME_DAY_TARGET_STATUS_TRANSITIONS = new Set([
-  'HESITANT->INTERESTED',
-  'INTERESTED->AGREED',
-]);
+const TARGET_PROGRESS_OUTCOMES = new Set(['INTERESTED', 'AGREED']);
+const TARGET_PROGRESS_INTERACTION_TYPES = ['CALL', 'SEND', 'STATUS'];
 const UNKNOWN_LEAD_NAME = 'Unknown';
 const CLAIM_TIMEOUT_MINUTES = 15;
 const MAX_TEAM_LEADS_PER_TEAM = 2;
@@ -923,7 +921,7 @@ async function startServer() {
       prisma.interaction.count({
         where: {
           userId,
-          type: { in: ['CALL', 'SEND'] },
+          type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
           outcome: 'AGREED',
           date: { gte: start, lt: end },
         },
@@ -931,7 +929,7 @@ async function startServer() {
       prisma.interaction.count({
         where: {
           userId,
-          type: { in: ['CALL', 'SEND'] },
+          type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
           outcome: 'INTERESTED',
           date: { gte: start, lt: end },
         },
@@ -966,7 +964,7 @@ async function startServer() {
             by: ['userId'],
             where: {
               userId: { in: ids },
-              type: { in: ['CALL', 'SEND'] },
+              type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
               outcome: 'AGREED',
               date: { gte: start, lt: end },
             },
@@ -976,7 +974,7 @@ async function startServer() {
             by: ['userId'],
             where: {
               userId: { in: ids },
-              type: { in: ['CALL', 'SEND'] },
+              type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
               outcome: 'INTERESTED',
               date: { gte: start, lt: end },
             },
@@ -3495,12 +3493,12 @@ async function startServer() {
 
       const hasStatusUpdate = Object.prototype.hasOwnProperty.call(req.body, 'status');
       const nextStatus = hasStatusUpdate ? status : existingLead.status;
-      const transitionKey = `${existingLead.status}->${nextStatus}`;
-      const shouldSyncSameDayTransition =
+      const statusChanged = hasStatusUpdate && nextStatus !== existingLead.status;
+      const shouldCreateTargetProgressInteraction =
         !logCall
-        && hasStatusUpdate
+        && statusChanged
         && (req.user.role === 'SALES' || req.user.role === 'TEAM_LEAD')
-        && SAME_DAY_TARGET_STATUS_TRANSITIONS.has(transitionKey);
+        && TARGET_PROGRESS_OUTCOMES.has(nextStatus);
 
       const lead = await prisma.$transaction(async (tx) => {
         const updatedLead = await tx.lead.update({
@@ -3516,57 +3514,18 @@ async function startServer() {
         });
 
         let hasInteractionMutation = false;
-        if (shouldSyncSameDayTransition) {
-          const now = new Date();
-          if (transitionKey === 'INTERESTED->AGREED') {
-            await tx.interaction.create({
-              data: {
-                leadId,
-                userId: req.user.id,
-                type: 'CALL',
-                outcome: nextStatus || null,
-                notes: Object.prototype.hasOwnProperty.call(req.body, 'notes') ? (notes || null) : null,
-                date: now,
-              },
-            });
-            hasInteractionMutation = true;
-          } else {
-            const { start, end } = buildDayRange();
-            const interactionToSync = await tx.interaction.findFirst({
-              where: {
-                leadId,
-                userId: req.user.id,
-                type: { in: ['CALL', 'SEND'] },
-                date: { gte: start, lt: end },
-              },
-              orderBy: { date: 'desc' },
-              select: { id: true },
-            });
-
-            if (interactionToSync) {
-              await tx.interaction.update({
-                where: { id: interactionToSync.id },
-                data: {
-                  outcome: nextStatus || null,
-                  date: now,
-                  ...(Object.prototype.hasOwnProperty.call(req.body, 'notes') ? { notes: notes || null } : {}),
-                },
-              });
-              hasInteractionMutation = true;
-            } else {
-              await tx.interaction.create({
-                data: {
-                  leadId,
-                  userId: req.user.id,
-                  type: 'CALL',
-                  outcome: nextStatus || null,
-                  notes: Object.prototype.hasOwnProperty.call(req.body, 'notes') ? (notes || null) : null,
-                  date: now,
-                },
-              });
-              hasInteractionMutation = true;
-            }
-          }
+        if (shouldCreateTargetProgressInteraction) {
+          await tx.interaction.create({
+            data: {
+              leadId,
+              userId: req.user.id,
+              type: 'STATUS',
+              outcome: nextStatus || null,
+              notes: Object.prototype.hasOwnProperty.call(req.body, 'notes') ? (notes || null) : null,
+              date: new Date(),
+            },
+          });
+          hasInteractionMutation = true;
         }
 
         if (logCall && (req.user.role === 'SALES' || req.user.role === 'TEAM_LEAD')) {
@@ -3728,7 +3687,7 @@ async function startServer() {
           by: ['userId'],
           where: {
             userId: { in: tenantSalesIds },
-            type: { in: ['CALL', 'SEND'] },
+            type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
             outcome: 'AGREED',
             date: { gte: start, lt: end },
           },
@@ -3738,7 +3697,7 @@ async function startServer() {
           by: ['userId'],
           where: {
             userId: { in: tenantSalesIds },
-            type: { in: ['CALL', 'SEND'] },
+            type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
             outcome: 'INTERESTED',
             date: { gte: start, lt: end },
           },
@@ -3834,7 +3793,7 @@ async function startServer() {
         approvalsToday = await prisma.interaction.count({
           where: {
             userId: req.user.id,
-            type: { in: ['CALL', 'SEND'] },
+            type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
             outcome: 'AGREED',
             date: { gte: start, lt: end },
             lead: { tenantId: actor.tenantId },
@@ -3843,7 +3802,7 @@ async function startServer() {
         interestedToday = await prisma.interaction.count({
           where: {
             userId: req.user.id,
-            type: { in: ['CALL', 'SEND'] },
+            type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
             outcome: 'INTERESTED',
             date: { gte: start, lt: end },
             lead: { tenantId: actor.tenantId },
@@ -3860,7 +3819,7 @@ async function startServer() {
         approvalsYesterday = await prisma.interaction.count({
           where: {
             userId: req.user.id,
-            type: { in: ['CALL', 'SEND'] },
+            type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
             outcome: 'AGREED',
             date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
             lead: { tenantId: actor.tenantId },
@@ -3869,7 +3828,7 @@ async function startServer() {
         interestedYesterday = await prisma.interaction.count({
           where: {
             userId: req.user.id,
-            type: { in: ['CALL', 'SEND'] },
+            type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
             outcome: 'INTERESTED',
             date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
             lead: { tenantId: actor.tenantId },
@@ -3931,7 +3890,7 @@ async function startServer() {
           ? await prisma.interaction.count({
               where: {
                 userId: { in: salesIds },
-                type: { in: ['CALL', 'SEND'] },
+                type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
                 outcome: 'AGREED',
                 date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
               },
@@ -3941,7 +3900,7 @@ async function startServer() {
           ? await prisma.interaction.count({
               where: {
                 userId: { in: salesIds },
-                type: { in: ['CALL', 'SEND'] },
+                type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
                 outcome: 'INTERESTED',
                 date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
               },
@@ -5518,7 +5477,7 @@ async function startServer() {
           prisma.interaction.count({
             where: {
               userId: user.id,
-              type: { in: ['CALL', 'SEND'] },
+              type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
               outcome: 'AGREED',
               date: { gte: start, lt: end },
             },
@@ -5526,7 +5485,7 @@ async function startServer() {
           prisma.interaction.count({
             where: {
               userId: user.id,
-              type: { in: ['CALL', 'SEND'] },
+              type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
               outcome: 'INTERESTED',
               date: { gte: start, lt: end },
             },
@@ -5628,7 +5587,7 @@ async function startServer() {
             prisma.interaction.count({
               where: {
                 userId: member.id,
-                type: { in: ['CALL', 'SEND'] },
+                type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
                 outcome: 'AGREED',
                 date: { gte: start, lt: end },
               },
@@ -5636,7 +5595,7 @@ async function startServer() {
             prisma.interaction.count({
               where: {
                 userId: member.id,
-                type: { in: ['CALL', 'SEND'] },
+                type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
                 outcome: 'INTERESTED',
                 date: { gte: start, lt: end },
               },

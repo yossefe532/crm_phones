@@ -119,7 +119,7 @@ const run = async () => {
   }), 'Update lead INTERESTED->AGREED');
 
   const statsAfterAgreed = expectOk(await request('/stats', { token: salesToken }), 'Fetch stats after agreed');
-  assert(statsAfterAgreed.callsToday === 2, `Expected callsToday=2 after second transition, got ${statsAfterAgreed.callsToday}`);
+  assert(statsAfterAgreed.callsToday === 1, `Expected callsToday to stay 1 after second transition, got ${statsAfterAgreed.callsToday}`);
   assert(statsAfterAgreed.interestedToday === 1, `Expected interestedToday to stay 1 after INTERESTED->AGREED, got ${statsAfterAgreed.interestedToday}`);
   assert(statsAfterAgreed.approvalsToday === 1, `Expected approvalsToday=1 after INTERESTED->AGREED, got ${statsAfterAgreed.approvalsToday}`);
 
