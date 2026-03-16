@@ -3495,11 +3495,12 @@ async function startServer() {
 
       const hasStatusUpdate = Object.prototype.hasOwnProperty.call(req.body, 'status');
       const nextStatus = hasStatusUpdate ? status : existingLead.status;
+      const transitionKey = `${existingLead.status}->${nextStatus}`;
       const shouldSyncSameDayTransition =
         !logCall
         && hasStatusUpdate
         && (req.user.role === 'SALES' || req.user.role === 'TEAM_LEAD')
-        && SAME_DAY_TARGET_STATUS_TRANSITIONS.has(`${existingLead.status}->${nextStatus}`);
+        && SAME_DAY_TARGET_STATUS_TRANSITIONS.has(transitionKey);
 
       const lead = await prisma.$transaction(async (tx) => {
         const updatedLead = await tx.lead.update({
@@ -3516,28 +3517,55 @@ async function startServer() {
 
         let hasInteractionMutation = false;
         if (shouldSyncSameDayTransition) {
-          const { start, end } = buildDayRange();
-          const interactionToSync = await tx.interaction.findFirst({
-            where: {
-              leadId,
-              userId: req.user.id,
-              type: { in: ['CALL', 'SEND'] },
-              date: { gte: start, lt: end },
-            },
-            orderBy: { date: 'desc' },
-            select: { id: true },
-          });
-
-          if (interactionToSync) {
-            await tx.interaction.update({
-              where: { id: interactionToSync.id },
+          const now = new Date();
+          if (transitionKey === 'INTERESTED->AGREED') {
+            await tx.interaction.create({
               data: {
-                outcome: status || null,
-                date: new Date(),
-                ...(Object.prototype.hasOwnProperty.call(req.body, 'notes') ? { notes: notes || null } : {}),
+                leadId,
+                userId: req.user.id,
+                type: 'CALL',
+                outcome: nextStatus || null,
+                notes: Object.prototype.hasOwnProperty.call(req.body, 'notes') ? (notes || null) : null,
+                date: now,
               },
             });
             hasInteractionMutation = true;
+          } else {
+            const { start, end } = buildDayRange();
+            const interactionToSync = await tx.interaction.findFirst({
+              where: {
+                leadId,
+                userId: req.user.id,
+                type: { in: ['CALL', 'SEND'] },
+                date: { gte: start, lt: end },
+              },
+              orderBy: { date: 'desc' },
+              select: { id: true },
+            });
+
+            if (interactionToSync) {
+              await tx.interaction.update({
+                where: { id: interactionToSync.id },
+                data: {
+                  outcome: nextStatus || null,
+                  date: now,
+                  ...(Object.prototype.hasOwnProperty.call(req.body, 'notes') ? { notes: notes || null } : {}),
+                },
+              });
+              hasInteractionMutation = true;
+            } else {
+              await tx.interaction.create({
+                data: {
+                  leadId,
+                  userId: req.user.id,
+                  type: 'CALL',
+                  outcome: nextStatus || null,
+                  notes: Object.prototype.hasOwnProperty.call(req.body, 'notes') ? (notes || null) : null,
+                  date: now,
+                },
+              });
+              hasInteractionMutation = true;
+            }
           }
         }
 
