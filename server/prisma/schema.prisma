@@ -142,7 +142,7 @@ model EmployeeProfile {
   timezone         String   @default("Africa/Cairo")
   dailyCallTarget  Int      @default(30)
   dailyApprovalTarget Int   @default(0)
-  dailyInterestedTarget Int @default(0)
+  dailyInterestedTarget Int @default(10)
   simSerialNumber  String?
   simPhoneNumber   String?
   manualVipLimit   Int?     // If null, use automatic logic based on approvals. If set, use this limit.

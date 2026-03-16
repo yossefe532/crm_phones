@@ -6,6 +6,7 @@ import { useAuth } from '../../store/useAuth';
 
 interface TeamMemberProfile {
   dailyCallTarget?: number;
+  dailyInterestedTarget?: number;
   dailyApprovalTarget?: number;
   department?: string;
   isActive?: boolean;
@@ -19,6 +20,7 @@ interface TeamMember {
   role: 'TEAM_LEAD' | 'SALES';
   teamId: number;
   callsToday?: number;
+  interestedToday?: number;
   agreedToday?: number;
   employeeProfile?: TeamMemberProfile | null;
 }
@@ -37,12 +39,16 @@ interface TeamStats {
   wrongNumber: number;
   callsToday: number;
   callsYesterday: number;
+  interested?: number;
+  interestedToday?: number;
   agreedToday?: number;
   totalCallTarget?: number;
+  totalInterestedTarget?: number;
   totalApprovalTarget?: number;
   totalTarget: number;
   targetAchievementPercent: number;
   callsAchievementPercent?: number;
+  interestedAchievementPercent?: number;
   approvalsAchievementPercent?: number;
 }
 
@@ -81,6 +87,7 @@ export default function TeamManagement() {
     role: 'SALES' as 'SALES' | 'TEAM_LEAD',
     teamId: '' as number | '',
     dailyCallTarget: 30,
+    dailyInterestedTarget: 10,
     dailyApprovalTarget: 0,
     department: 'Sales',
   });
@@ -164,6 +171,7 @@ export default function TeamManagement() {
         teamId: isAdmin ? form.teamId : undefined,
         employeeProfile: {
           dailyCallTarget: form.dailyCallTarget,
+          dailyInterestedTarget: form.dailyInterestedTarget,
           dailyApprovalTarget: form.dailyApprovalTarget,
           department: form.department.trim() || 'Sales',
           isActive: true,
@@ -177,6 +185,7 @@ export default function TeamManagement() {
         password: '',
         role: 'SALES',
         dailyCallTarget: 30,
+        dailyInterestedTarget: 10,
         dailyApprovalTarget: 0,
         department: 'Sales',
       }));
@@ -260,8 +269,11 @@ export default function TeamManagement() {
     if (callTargetRaw === null) return;
     const approvalTargetRaw = window.prompt('اكتب هدف الموافقات اليومي للفريق (0 - 200)');
     if (approvalTargetRaw === null) return;
+    const interestedTargetRaw = window.prompt('اكتب هدف المهتمين اليومي للفريق (0 - 300)');
+    if (interestedTargetRaw === null) return;
     const callTarget = Number(callTargetRaw);
     const approvalTarget = Number(approvalTargetRaw);
+    const interestedTarget = Number(interestedTargetRaw);
     if (!Number.isInteger(callTarget) || callTarget < 1 || callTarget > 500) {
       setError('هدف المكالمات يجب أن يكون رقمًا صحيحًا بين 1 و 500');
       return;
@@ -270,10 +282,15 @@ export default function TeamManagement() {
       setError('هدف الموافقات يجب أن يكون رقمًا صحيحًا بين 0 و 200');
       return;
     }
+    if (!Number.isInteger(interestedTarget) || interestedTarget < 0 || interestedTarget > 300) {
+      setError('هدف المهتمين يجب أن يكون رقمًا صحيحًا بين 0 و 300');
+      return;
+    }
     setSaving(true);
     try {
       const response = await api.put(`/admin/teams/${team.id}/update-target`, {
         dailyCallTarget: callTarget,
+        dailyInterestedTarget: interestedTarget,
         dailyApprovalTarget: approvalTarget,
       });
       setSuccess(response.data?.message || 'تم تحديث تارجت الفريق');
@@ -291,6 +308,8 @@ export default function TeamManagement() {
     if (callTargetRaw === null) return;
     const approvalTargetRaw = window.prompt(`هدف الموافقات اليومي لـ ${member.name} (0 - 200)`, String(member.employeeProfile?.dailyApprovalTarget ?? 0));
     if (approvalTargetRaw === null) return;
+    const interestedTargetRaw = window.prompt(`هدف المهتمين اليومي لـ ${member.name} (0 - 300)`, String(member.employeeProfile?.dailyInterestedTarget ?? 10));
+    if (interestedTargetRaw === null) return;
     
     // VIP Limit prompt
     const currentVipLimit = member.employeeProfile?.manualVipLimit;
@@ -301,6 +320,7 @@ export default function TeamManagement() {
     
     const callTarget = Number(callTargetRaw);
     const approvalTarget = Number(approvalTargetRaw);
+    const interestedTarget = Number(interestedTargetRaw);
     let vipLimit: number | null = null;
 
     if (vipLimitRaw !== null && vipLimitRaw.trim() !== '') {
@@ -321,10 +341,15 @@ export default function TeamManagement() {
       setError('هدف الموافقات يجب أن يكون رقمًا صحيحًا بين 0 و 200');
       return;
     }
+    if (!Number.isInteger(interestedTarget) || interestedTarget < 0 || interestedTarget > 300) {
+      setError('هدف المهتمين يجب أن يكون رقمًا صحيحًا بين 0 و 300');
+      return;
+    }
     setSaving(true);
     try {
       await api.put(`/admin/employees/${member.id}/profile`, {
         dailyCallTarget: callTarget,
+        dailyInterestedTarget: interestedTarget,
         dailyApprovalTarget: approvalTarget,
         manualVipLimit: vipLimit
       });
@@ -367,7 +392,7 @@ export default function TeamManagement() {
           <input className="input-field" placeholder="البريد الإلكتروني" value={form.email} onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))} />
           <input className="input-field" type="password" placeholder="كلمة المرور" value={form.password} onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))} />
         </div>
-        <div className="grid md:grid-cols-4 gap-3">
+        <div className="grid md:grid-cols-5 gap-3">
           {isAdmin ? (
             <>
               <select className="input-field" value={form.role} onChange={(e) => setForm((prev) => ({ ...prev, role: e.target.value as 'SALES' | 'TEAM_LEAD' }))}>
@@ -385,6 +410,7 @@ export default function TeamManagement() {
             <div className="input-field flex items-center">{teams[0]?.name || 'فريقي'}</div>
           )}
           <input className="input-field" type="number" min={1} max={500} placeholder="هدف المكالمات" value={form.dailyCallTarget} onChange={(e) => setForm((prev) => ({ ...prev, dailyCallTarget: Number(e.target.value) || 30 }))} />
+          <input className="input-field" type="number" min={0} max={300} placeholder="هدف المهتمين" value={form.dailyInterestedTarget} onChange={(e) => setForm((prev) => ({ ...prev, dailyInterestedTarget: Number(e.target.value) || 0 }))} />
           <input className="input-field" type="number" min={0} max={200} placeholder="هدف الموافقات" value={form.dailyApprovalTarget} onChange={(e) => setForm((prev) => ({ ...prev, dailyApprovalTarget: Number(e.target.value) || 0 }))} />
           <input className="input-field" placeholder="القسم" value={form.department} onChange={(e) => setForm((prev) => ({ ...prev, department: e.target.value }))} />
         </div>
@@ -409,7 +435,7 @@ export default function TeamManagement() {
                 </p>
               </div>
               <div className="text-sm text-slate-600">
-                ليدز: {team.stats.totalLeads} • Pool: {team.stats.poolCount} • مكالمات اليوم: {team.stats.callsToday} • موافقات اليوم: {team.stats.agreedToday ?? 0}
+                ليدز: {team.stats.totalLeads} • Pool: {team.stats.poolCount} • مكالمات اليوم: {team.stats.callsToday} • مهتمين اليوم: {team.stats.interestedToday ?? 0} • موافقات اليوم: {team.stats.agreedToday ?? 0}
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -441,8 +467,10 @@ export default function TeamManagement() {
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">إعادة تواصل</p><p className="font-bold">{team.stats.recontact}</p></div>
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">رقم خاطئ</p><p className="font-bold">{team.stats.wrongNumber}</p></div>
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">هدف المكالمات</p><p className="font-bold">{team.stats.totalCallTarget ?? team.stats.totalTarget}</p></div>
+              <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">هدف المهتمين</p><p className="font-bold">{team.stats.totalInterestedTarget ?? team.members.reduce((sum, member) => sum + (member.employeeProfile?.dailyInterestedTarget || 0), 0)}</p></div>
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">هدف الموافقات</p><p className="font-bold">{team.stats.totalApprovalTarget ?? 0}</p></div>
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">إنجاز المكالمات</p><p className="font-bold">{Math.round(team.stats.callsAchievementPercent ?? team.stats.targetAchievementPercent)}%</p></div>
+              <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">إنجاز المهتمين</p><p className="font-bold">{Math.round(team.stats.interestedAchievementPercent ?? ((team.stats.totalInterestedTarget ?? team.members.reduce((sum, member) => sum + (member.employeeProfile?.dailyInterestedTarget || 0), 0)) > 0 ? ((team.stats.interestedToday ?? 0) / (team.stats.totalInterestedTarget ?? team.members.reduce((sum, member) => sum + (member.employeeProfile?.dailyInterestedTarget || 0), 0))) * 100 : 0))}%</p></div>
               <div className="bg-slate-100 rounded-xl p-3 text-center"><p className="text-xs text-slate-500">تحقيق الهدف</p><p className="font-bold">{team.stats.targetAchievementPercent}%</p></div>
             </div>
 
@@ -453,8 +481,10 @@ export default function TeamManagement() {
                     <th className="py-3">العضو</th>
                     <th className="py-3">الدور</th>
                     <th className="py-3">هدف المكالمات</th>
+                    <th className="py-3">هدف المهتمين</th>
                     <th className="py-3">هدف الموافقات</th>
                     <th className="py-3">مكالمات اليوم</th>
+                    <th className="py-3">مهتمين اليوم</th>
                     <th className="py-3">موافقات اليوم</th>
                     <th className="py-3">الحالة</th>
                     <th className="py-3">إجراءات</th>
@@ -465,11 +495,13 @@ export default function TeamManagement() {
                     (() => {
                       const callTarget = member.employeeProfile?.dailyCallTarget ?? 0;
                       const approvalTarget = member.employeeProfile?.dailyApprovalTarget ?? 0;
+                      const interestedTarget = member.employeeProfile?.dailyInterestedTarget ?? 0;
                       const calls = member.callsToday ?? 0;
+                      const interestedToday = member.interestedToday ?? 0;
                       const approvals = member.agreedToday ?? 0;
                       const done = member.employeeProfile?.isActive === false
                         ? false
-                        : calls >= callTarget && approvals >= approvalTarget;
+                        : calls >= callTarget && interestedToday >= interestedTarget && approvals >= approvalTarget;
                       return (
                     <tr key={member.id} className="border-b border-slate-100">
                       <td className="py-3">
@@ -482,8 +514,10 @@ export default function TeamManagement() {
                         </span>
                       </td>
                       <td className="py-3">{member.employeeProfile?.dailyCallTarget ?? '-'}</td>
+                      <td className="py-3">{member.employeeProfile?.dailyInterestedTarget ?? '-'}</td>
                       <td className="py-3">{member.employeeProfile?.dailyApprovalTarget ?? '-'}</td>
                       <td className="py-3 font-semibold">{calls}</td>
+                      <td className="py-3 font-semibold">{interestedToday}</td>
                       <td className="py-3 font-semibold">{approvals}</td>
                       <td className="py-3">
                         <span className={`px-2 py-1 rounded-full text-xs ${member.employeeProfile?.isActive === false ? 'bg-slate-200 text-slate-600' : 'bg-emerald-100 text-emerald-700'}`}>

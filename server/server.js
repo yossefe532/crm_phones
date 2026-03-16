@@ -1266,7 +1266,7 @@ async function startServer() {
                 employeeProfile: {
                   create: {
                     dailyCallTarget: 30,
-                    dailyInterestedTarget: 0,
+                    dailyInterestedTarget: 10,
                     ...profilePayload,
                   },
                 },
@@ -1750,7 +1750,7 @@ async function startServer() {
                 employeeProfile: {
                   create: {
                     dailyCallTarget: 30,
-                    dailyInterestedTarget: 0,
+                    dailyInterestedTarget: 10,
                     ...profilePayload,
                   },
                 },
@@ -4012,7 +4012,7 @@ async function startServer() {
             userId: req.user.id,
             phone: whatsappPhone,
             dailyCallTarget: 30,
-            dailyInterestedTarget: 0,
+            dailyInterestedTarget: 10,
             department: 'Sales',
             isActive: true,
             timezone: 'Africa/Cairo',
@@ -4196,7 +4196,7 @@ async function startServer() {
           timezone: 'Africa/Cairo',
           dailyCallTarget: 30,
           dailyApprovalTarget: 0,
-          dailyInterestedTarget: 0,
+          dailyInterestedTarget: 10,
           department: 'Sales',
           isActive: true,
           ...profilePayload,
@@ -4322,7 +4322,7 @@ async function startServer() {
           timezone: 'Africa/Cairo',
           dailyCallTarget: 30,
           dailyApprovalTarget: 0,
-          dailyInterestedTarget: 0,
+          dailyInterestedTarget: 10,
           isActive: true,
         },
         callsToday: 0,
@@ -4856,7 +4856,7 @@ async function startServer() {
       const includeUnpublished = String(req.query.includeUnpublished || '').toLowerCase() === 'true';
       const where = {
         tenantId: actor.tenantId,
-        ...(includeUnpublished && actor.role === 'ADMIN' ? {} : { isPublished: true }),
+        ...(includeUnpublished && (actor.role === 'ADMIN' || actor.role === 'TEAM_LEAD') ? {} : { isPublished: true }),
       };
       const faqs = await prisma.fAQ.findMany({
         where,
@@ -4873,7 +4873,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/admin/faqs', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+  app.post('/api/admin/faqs', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
     const question = normalizeNullableString(req.body?.question, 500);
     const answer = normalizeNullableString(req.body?.answer, 4000);
     const category = normalizeNullableString(req.body?.category, 120);
@@ -4907,7 +4907,7 @@ async function startServer() {
     }
   });
 
-  app.put('/api/admin/faqs/:id', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+  app.put('/api/admin/faqs/:id', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
     const faqId = parseInteger(req.params.id);
     if (faqId === null || faqId < 1) return res.status(400).json({ error: 'Invalid FAQ id' });
     try {
@@ -4952,7 +4952,7 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/admin/faqs/:id', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+  app.delete('/api/admin/faqs/:id', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
     const faqId = parseInteger(req.params.id);
     if (faqId === null || faqId < 1) return res.status(400).json({ error: 'Invalid FAQ id' });
     try {

@@ -250,7 +250,7 @@ export default function ReleaseNotesBell() {
                     >
                       <h5 className="text-lg font-black text-indigo-700 mb-2">2) قراءة كل إصدار</h5>
                       <p className="text-sm text-slate-700 leading-7">
-                        من القائمة الجانبية تقدر تختار أي إصدار، وبمجرد فتحه يتم وضعه كمقروء تلقائياً.
+                        من القائمة الجانبية تقدر تختار أي إصدار، وتشوف فيه الجديد زي تحديثات FAQ أو نظام الاقتراحات. وبمجرد فتحه يتم وضعه كمقروء تلقائياً.
                       </p>
                     </div>
                     <div
@@ -259,9 +259,9 @@ export default function ReleaseNotesBell() {
                         guideStep === 2 ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-8 absolute inset-0 pointer-events-none',
                       )}
                     >
-                      <h5 className="text-lg font-black text-indigo-700 mb-2">3) تحديد الكل كمقروء</h5>
+                      <h5 className="text-lg font-black text-indigo-700 mb-2">3) متابعة الميزات الجديدة</h5>
                       <p className="text-sm text-slate-700 leading-7">
-                        زر "تحديد الكل كمقروء" مفيد عند مراجعة كل الإصدارات بسرعة.
+                        تابع أي إصدار يخص FAQ أو الاقتراحات ثم استخدم زر "تحديد الكل كمقروء" بعد المراجعة السريعة.
                       </p>
                     </div>
                   </div>

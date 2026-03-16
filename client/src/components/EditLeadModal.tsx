@@ -22,6 +22,19 @@ const schema = z.object({
 });
 
 type FormData = z.infer<typeof schema>;
+const UNKNOWN_NAME_VALUE = 'UNKNOWN';
+const UNKNOWN_ALLOWED_STATUSES = new Set(['NEW', 'NO_ANSWER', 'RECONTACT', 'WRONG_NUMBER']);
+const STATUS_LABELS: Record<string, string> = {
+  NEW: 'جديد',
+  INTERESTED: 'مهتم',
+  AGREED: 'موافق',
+  HESITANT: 'متردد',
+  REJECTED: 'مرفوض',
+  SPONSOR: 'سبونسر',
+  NO_ANSWER: 'مردش',
+  RECONTACT: 'إعادة تواصل',
+  WRONG_NUMBER: 'رقم خاطئ',
+};
 
 interface Props {
   lead: any;
@@ -37,6 +50,7 @@ interface StatusTemplate {
 export default function EditLeadModal({ lead, onClose, onUpdate }: Props) {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [templates, setTemplates] = useState<StatusTemplate[]>([]);
   const [template, setTemplate] = useState('');
   const [messageDraft, setMessageDraft] = useState('');
@@ -123,6 +137,11 @@ export default function EditLeadModal({ lead, onClose, onUpdate }: Props) {
   };
 
   const onSubmit = async (data: FormData) => {
+    setError('');
+    if (data.name.trim().toUpperCase() === UNKNOWN_NAME_VALUE && !UNKNOWN_ALLOWED_STATUSES.has(data.status)) {
+      setError(`لا يمكن حفظ الحالة "${STATUS_LABELS[data.status] || data.status}" مع اسم UNKNOWN. أدخل الاسم أولاً.`);
+      return;
+    }
     setLoading(true);
     const selectedTemplate = templates.find((t) => t.status === data.status);
     const autoMessage = selectedTemplate
@@ -195,6 +214,11 @@ export default function EditLeadModal({ lead, onClose, onUpdate }: Props) {
               {errors.whatsappPhone && <p className="text-xs text-red-500">{errors.whatsappPhone.message}</p>}
             </div>
           </div>
+          {error && (
+            <div className="rounded-xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm font-bold">
+              {error}
+            </div>
+          )}
 
           <div className="space-y-3">
             <label className="text-sm font-bold text-slate-700">النوع</label>
@@ -232,6 +256,7 @@ export default function EditLeadModal({ lead, onClose, onUpdate }: Props) {
                 { value: 'SPONSOR', label: 'سبونسر', color: 'bg-yellow-100 text-yellow-700 border-yellow-300', icon: Crown },
                 { value: 'NO_ANSWER', label: 'مردش', color: 'bg-blue-100 text-blue-700' },
                 { value: 'RECONTACT', label: 'إعادة تواصل', color: 'bg-indigo-100 text-indigo-700' },
+                { value: 'WRONG_NUMBER', label: 'رقم خاطئ', color: 'bg-rose-100 text-rose-700' },
               ].map((status) => (
                 <label 
                   key={status.value}

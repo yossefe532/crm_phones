@@ -45,10 +45,10 @@ function App() {
               <Route path="employees/:id" element={<EmployeePerformance />} />
               <Route path="teams" element={<TeamManagement />} />
               <Route path="sim-cards" element={<SimCards />} />
+              <Route path="faqs" element={<FaqManagement />} />
               <Route element={<SuperAdminRoute />}>
                 <Route path="upload" element={<UploadLeads />} />
                 <Route path="pooled-numbers" element={<PooledNumbers />} />
-                <Route path="faqs" element={<FaqManagement />} />
               </Route>
             </Route>
 

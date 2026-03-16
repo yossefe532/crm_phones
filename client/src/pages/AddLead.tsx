@@ -72,6 +72,18 @@ interface RecontactLeadPayload {
 
 export default function AddLead() {
   const UNKNOWN_NAME_VALUE = 'Unknown';
+  const UNKNOWN_ALLOWED_STATUSES: LeadForm['status'][] = ['NEW', 'NO_ANSWER', 'RECONTACT', 'WRONG_NUMBER'];
+  const STATUS_LABELS: Record<LeadForm['status'], string> = {
+    NEW: 'جديد',
+    INTERESTED: 'مهتم',
+    AGREED: 'موافق',
+    HESITANT: 'متردد',
+    REJECTED: 'مرفوض',
+    SPONSOR: 'سبونسر',
+    NO_ANSWER: 'مردش',
+    RECONTACT: 'إعادة تواصل',
+    WRONG_NUMBER: 'رقم خاطئ',
+  };
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -274,6 +286,10 @@ export default function AddLead() {
 
   const onSubmit = async (data: LeadForm) => {
     if (data.name.trim().toUpperCase() === 'UNKNOWN') {
+      if (!UNKNOWN_ALLOWED_STATUSES.includes(data.status)) {
+        setError(`لا يمكن الحفظ باسم UNKNOWN مع حالة "${STATUS_LABELS[data.status]}". أدخل اسم العميل أولاً أو غيّر الحالة.`);
+        return;
+      }
       pendingSubmitRef.current = data;
       setShowUnknownNameConfirm(true);
       return;
@@ -295,6 +311,7 @@ export default function AddLead() {
   const currentPhone = watch('phone');
   const currentWhatsappPhone = watch('whatsappPhone');
   const currentNotes = watch('notes');
+  const unknownNameSelected = currentName?.trim().toUpperCase() === 'UNKNOWN';
   const selectedTemplate = templates.find((t) => t.status === currentStatus);
   const previewMessage = useMemo(
     () =>
@@ -556,6 +573,11 @@ export default function AddLead() {
               </label>
             ))}
           </div>
+          {unknownNameSelected && !UNKNOWN_ALLOWED_STATUSES.includes(currentStatus) && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 px-4 py-2 text-xs font-bold">
+              الاسم UNKNOWN متاح فقط مع حالات: {UNKNOWN_ALLOWED_STATUSES.map((status) => STATUS_LABELS[status]).join(' • ')}.
+            </div>
+          )}
           <div className="flex flex-wrap gap-3">
             <label
               className={clsx(

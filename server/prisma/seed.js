@@ -94,7 +94,7 @@ async function main() {
         jobTitle: 'Sales Agent',
         timezone: 'Africa/Cairo',
         dailyCallTarget: 30,
-        dailyInterestedTarget: 5,
+        dailyInterestedTarget: 10,
         isActive: true,
       },
     });
@@ -125,22 +125,34 @@ async function main() {
 
   const defaultFaqs = [
     {
-      question: 'إزاي أبدأ مكالمة جديدة مع عميل؟',
-      answer: 'ادخل على شاشة إضافة عميل، اختار الحالة المناسبة وسجل ملاحظات المكالمة ثم احفظ.',
-      category: 'المكالمات',
+      question: 'كيف أستخدم FAQ أثناء المكالمة؟',
+      answer: 'ادخل صفحة "إضافة عميل جديد" وستجد قسم "FAQ سريع أثناء المكالمة" بأسئلة جاهزة. اختر السؤال المناسب لعرض الإجابة فورًا وتوجيه العميل بسرعة.',
+      category: 'FAQ',
       sortOrder: 1,
     },
     {
-      question: 'إمتى أستخدم حالة INTERESTED؟',
-      answer: 'استخدمها لما العميل يوضح اهتمام واضح لكنه لسه ماوصلش لقرار نهائي أو موافقة مكتملة.',
-      category: 'الحالات',
+      question: 'من المسؤول عن تحديث الأسئلة الشائعة؟',
+      answer: 'إدارة FAQ متاحة الآن لكل من ADMIN وTEAM_LEAD من شاشة "إدارة FAQ"، ويمكنهم إضافة سؤال جديد أو تعديل الإجابات أو إخفاء العناصر غير المناسبة.',
+      category: 'FAQ',
       sortOrder: 2,
     },
     {
-      question: 'فين أقدر أشوف التارجت اليومي؟',
-      answer: 'من لوحة التحكم هتلاقي التارجت اليومي للمكالمات والمهتمين والموافقات والمتبقي منهم.',
-      category: 'التارجت',
+      question: 'ما الفرق بين الحالة INTERESTED و AGREED؟',
+      answer: 'INTERESTED تعني أن العميل مهتم ويحتاج متابعة، أما AGREED فتعني موافقة واضحة ونهائية على الخطوة المطلوبة.',
+      category: 'الحالات',
       sortOrder: 3,
+    },
+    {
+      question: 'كيف أرسل اقتراحًا لتحسين النظام؟',
+      answer: 'من صفحة "الاقتراحات" اكتب اقتراحك بشكل واضح وسيصل مباشرة للإدارة. يمكن متابعة حالة الرد من نفس الصفحة.',
+      category: 'الاقتراحات',
+      sortOrder: 4,
+    },
+    {
+      question: 'أين أجد الأهداف اليومية للمكالمات والمهتمين؟',
+      answer: 'ستجد الأهداف اليومية في لوحة التحكم، وتشمل: المكالمات، المهتمين، والموافقات مع عرض المنجز والمتبقي لكل مؤشر.',
+      category: 'التارجت',
+      sortOrder: 5,
     },
   ];
 
@@ -171,6 +183,53 @@ async function main() {
           isPublished: true,
         },
       });
+    }
+  }
+
+  const defaultReleaseNotes = [
+    {
+      title: 'تحديث جديد: إدارة FAQ والاقتراحات',
+      version: 'v1.7.0',
+      body: [
+        'تم إضافة تحسينات مهمة لدعم الفريق أثناء العمل اليومي:',
+        '',
+        '• إدارة FAQ أصبحت أسهل، ويمكن لـ ADMIN وTEAM_LEAD إضافة/تعديل/حذف الأسئلة الشائعة.',
+        '• قسم FAQ يظهر داخل شاشة إضافة العميل لمساعدة الموظف على الرد السريع أثناء المكالمة.',
+        '• تم تفعيل تدفق الاقتراحات بحيث يقدر أي عضو يرسل اقتراحاته من صفحة "الاقتراحات" ومتابعة الرد عليها.',
+        '',
+        'هذه التحسينات تقلل وقت الرد على العملاء وترفع جودة التواصل داخل الفريق.',
+      ].join('\n'),
+    },
+  ];
+
+  for (const tenant of tenants) {
+    for (const note of defaultReleaseNotes) {
+      const existing = await prisma.releaseNote.findFirst({
+        where: { tenantId: tenant.id, title: note.title },
+        select: { id: true },
+      });
+      if (existing) {
+        await prisma.releaseNote.update({
+          where: { id: existing.id },
+          data: {
+            body: note.body,
+            version: note.version,
+            isPublished: true,
+            publishedAt: new Date(),
+          },
+        });
+      } else {
+        await prisma.releaseNote.create({
+          data: {
+            tenantId: tenant.id,
+            title: note.title,
+            body: note.body,
+            version: note.version,
+            isPublished: true,
+            publishedAt: new Date(),
+          },
+        });
+      }
     }
   }
 

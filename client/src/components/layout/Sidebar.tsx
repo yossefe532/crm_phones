@@ -82,7 +82,7 @@ export default function Sidebar() {
     { to: '/admin/faqs', icon: HelpCircle, label: 'إدارة FAQ' },
   ];
   const visibleAdminItems = user?.role === 'TEAM_LEAD'
-    ? adminItems.filter((item) => item.to === '/admin/employees' || item.to === '/admin/teams')
+    ? adminItems.filter((item) => item.to === '/admin/employees' || item.to === '/admin/teams' || item.to === '/admin/faqs')
     : adminItems;
 
   return (
