@@ -56,6 +56,7 @@ const TARGET_PROGRESS_OUTCOMES = new Set(['INTERESTED', 'AGREED']);
 const TARGET_PROGRESS_INTERACTION_TYPES = ['CALL', 'SEND', 'STATUS'];
 const UNKNOWN_LEAD_NAME = 'Unknown';
 const CLAIM_TIMEOUT_MINUTES = 15;
+const AUTO_NO_ANSWER_RECYCLE_HOURS = 24;
 const MAX_TEAM_LEADS_PER_TEAM = 2;
 const DEFAULT_TEMPLATES = [
   { status: 'INTERESTED', content: 'شكراً يا {customer_title} {customer_name} على اهتمامك. مع حضرتك {user_name}، وهبعت لك التفاصيل كاملة وخطوة المتابعة القادمة.' },
@@ -262,6 +263,44 @@ const parseDateTime = (value) => {
   if (typeof value !== 'string' || !value.trim()) return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const autoRecycleNoAnswerLeadsToPool = async ({ now = new Date() } = {}) => {
+  const cutoff = new Date(now.getTime() - (AUTO_NO_ANSWER_RECYCLE_HOURS * 60 * 60 * 1000));
+  const affected = await prisma.lead.findMany({
+    where: {
+      status: 'NO_ANSWER',
+      agentId: { not: null },
+      updatedAt: { lte: cutoff },
+    },
+    select: { id: true, tenantId: true },
+  });
+  if (!affected.length) return 0;
+
+  const leadIds = affected.map((item) => item.id);
+  const result = await prisma.lead.updateMany({
+    where: { id: { in: leadIds } },
+    data: {
+      status: POOL_STATUS,
+      source: POOL_SOURCE,
+      agentId: null,
+      claimedAt: null,
+      nextRecontactAt: null,
+      recontactAttempts: 0,
+    },
+  });
+
+  if (result.count > 0) {
+    const tenantIds = [...new Set(affected.map((item) => item.tenantId).filter(Boolean))];
+    tenantIds.forEach((tenantId) => {
+      broadcastTenantEvent(tenantId, 'invalidate', {
+        at: new Date().toISOString(),
+        kind: 'lead',
+      });
+    });
+    console.log(`[pool] Auto-recycled ${result.count} NO_ANSWER leads back to pool (older than ${AUTO_NO_ANSWER_RECYCLE_HOURS}h).`);
+  }
+  return result.count;
 };
 
 const normalizeGender = (value) => {
@@ -5451,6 +5490,15 @@ async function startServer() {
   }
 
   // --- Cron Jobs ---
+
+  // 0. Auto-recycle stale NO_ANSWER leads back to pool (every 10 minutes)
+  cron.schedule('*/10 * * * *', async () => {
+    try {
+      await autoRecycleNoAnswerLeadsToPool();
+    } catch (error) {
+      console.error('[cron] NO_ANSWER recycle to pool error:', error);
+    }
+  });
 
   // 1. Hourly Reminder for Sales (09:00 - 22:00)
   cron.schedule('0 9-22 * * *', async () => {
