@@ -56,13 +56,33 @@ export default function UploadLeads() {
       const rows = data
         .map((row: any) => {
           if (typeof row === 'string') return row.trim();
+          if (Array.isArray(row)) {
+            return row
+              .map((cell) => (typeof cell === 'string' || typeof cell === 'number' ? String(cell).trim() : ''))
+              .filter(Boolean);
+          }
           return {
             name: row.name || row['الاسم'] || row['Name'] || '',
             phone: String(row.phone || row['رقم الهاتف'] || row['موبايل'] || row['Phone'] || '').trim(),
+            profileDetails:
+              row.profileDetails
+              || row.occupation
+              || row.job
+              || row.jobTitle
+              || row['الوظيفة']
+              || row['وظيفة']
+              || row['المسمى الوظيفي']
+              || row['المهنة']
+              || row['الشغل']
+              || '',
             gender: row.gender || row['النوع'] || 'UNKNOWN',
           };
         })
-        .filter((row) => (typeof row === 'string' ? row.trim().length > 0 : row.phone.length > 0));
+        .filter((row) => {
+          if (typeof row === 'string') return row.trim().length > 0;
+          if (Array.isArray(row)) return row.length > 0;
+          return row.phone.length > 0;
+        });
 
       if (rows.length === 0) {
         throw new Error('لا توجد بيانات صالحة للمعالجة');
@@ -124,7 +144,7 @@ export default function UploadLeads() {
         const wb = XLSX.read(bstr, { type: 'binary' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws);
+        const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
         processData(data);
       } catch (err) {
         setError('فشل قراءة الملف. تأكد من أن الملف سليم.');
@@ -274,7 +294,7 @@ export default function UploadLeads() {
             </div>
             <div>
               <p className="text-lg font-bold text-slate-700">اختر ملف Excel (.xlsx, .csv)</p>
-              <p className="text-sm text-slate-500 mt-1">يجب أن يحتوي الملف على عمود 'phone' على الأقل</p>
+              <p className="text-sm text-slate-500 mt-1">مدعوم: (اسم + رقم) أو (اسم + رقم + وظيفة/وظيفتين) مع أو بدون هيدر</p>
             </div>
             
             <input

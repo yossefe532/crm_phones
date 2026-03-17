@@ -310,12 +310,21 @@ const normalizeGender = (value) => {
 };
 
 const normalizeEgyptMobile = (value) => {
-  if (typeof value !== 'string') return null;
-  let digits = value.trim().replace(/\D/g, '');
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  let digits = toAsciiDigits(String(value)).trim().replace(/\D/g, '');
   if (!digits) return null;
-  if (digits.startsWith('00')) digits = digits.slice(2);
-  if (/^20[1235][0-9]{9}$/.test(digits)) return `0${digits.slice(2)}`;
-  if (/^01[0125][0-9]{8}$/.test(digits)) return digits;
+  if (digits.startsWith('00')) digits = digits.replace(/^00+/, '');
+
+  const compactPatterns = [
+    /^1([0125][0-9]{8})$/,      // 10 digits, no leading 0
+    /^01([0125][0-9]{8})$/,     // 11 digits, local Egyptian mobile
+    /^20(1[0125][0-9]{8})$/,    // 12 digits, country code 20
+    /^020(1[0125][0-9]{8})$/,   // 13 digits, rare prefixed format
+  ];
+  for (const pattern of compactPatterns) {
+    const match = digits.match(pattern);
+    if (match?.[1]) return `0${match[1]}`;
+  }
   return null;
 };
 
@@ -376,21 +385,81 @@ const hasValidProvidedName = (value) => {
   return normalized.toLowerCase() !== UNKNOWN_LEAD_NAME.toLowerCase();
 };
 
-const parseBulkLine = (line) => {
-  if (typeof line !== 'string') return null;
-  const raw = line.trim();
-  if (!raw) return null;
-  const parts = raw.split(',').map((part) => part.trim());
-  const first = parts[0] || '';
-  const nameParts = parts.slice(1).filter(Boolean);
-  const normalizedPhone = normalizeEgyptMobile(first);
-  if (!normalizedPhone) return null;
-  const providedName = normalizeNullableString(nameParts.join(' '), 120);
+const buildBulkProfileDetails = (tokens, maxLength = 300) => {
+  if (!Array.isArray(tokens) || !tokens.length) return null;
+  const unique = [];
+  const seen = new Set();
+  tokens.forEach((token) => {
+    if (typeof token !== 'string' && typeof token !== 'number') return;
+    const raw = String(token).trim();
+    if (!raw) return;
+    if (normalizeEgyptMobile(raw)) return;
+    const normalizedKey = raw.replace(/\s+/g, ' ').toLowerCase();
+    if (seen.has(normalizedKey)) return;
+    seen.add(normalizedKey);
+    unique.push(raw);
+  });
+  return normalizeNullableString(unique.join(' | '), maxLength);
+};
+
+const inferBulkRowParts = (tokens) => {
+  if (!Array.isArray(tokens) || !tokens.length) return null;
+  const normalizedTokens = tokens
+    .map((token) => (typeof token === 'string' || typeof token === 'number' ? String(token).trim() : ''))
+    .filter(Boolean);
+  if (!normalizedTokens.length) return null;
+
+  let phoneIndex = -1;
+  let normalizedPhone = null;
+  for (let index = 0; index < normalizedTokens.length; index += 1) {
+    const candidate = normalizeEgyptMobile(normalizedTokens[index]);
+    if (candidate) {
+      phoneIndex = index;
+      normalizedPhone = candidate;
+      break;
+    }
+  }
+  if (!normalizedPhone || phoneIndex < 0) return null;
+
+  const hasPhoneFirstFormat = phoneIndex === 0;
+  const nameTokens = hasPhoneFirstFormat
+    ? normalizedTokens.slice(1, 2)
+    : normalizedTokens.slice(0, phoneIndex);
+  const occupationTokens = hasPhoneFirstFormat
+    ? normalizedTokens.slice(2)
+    : normalizedTokens.slice(phoneIndex + 1);
+
+  const providedName = normalizeNullableString(nameTokens.join(' '), 120);
+  const occupation = buildBulkProfileDetails(occupationTokens, 300);
+
   return {
     phone: normalizedPhone,
     name: providedName || UNKNOWN_LEAD_NAME,
     hasProvidedName: !!providedName,
+    profileDetails: occupation || null,
+    hasProvidedProfileDetails: !!occupation,
   };
+};
+
+const parseBulkLine = (line) => {
+  if (typeof line !== 'string') return null;
+  const raw = line.trim();
+  if (!raw) return null;
+  const delimitedParts = raw
+    .split(/[,\t;|]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (delimitedParts.length > 1) {
+    return inferBulkRowParts(delimitedParts);
+  }
+  const plusSeparated = raw
+    .split('+')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (plusSeparated.length > 1) {
+    return inferBulkRowParts(plusSeparated);
+  }
+  return inferBulkRowParts([raw]);
 };
 
 const normalizeBulkLeadInput = (lead) => {
@@ -398,16 +467,54 @@ const normalizeBulkLeadInput = (lead) => {
   if (typeof lead === 'string') {
     return parseBulkLine(lead);
   }
+  if (Array.isArray(lead)) {
+    const inferredFromArray = inferBulkRowParts(lead);
+    if (!inferredFromArray) return null;
+    return {
+      ...inferredFromArray,
+      gender: 'UNKNOWN',
+    };
+  }
   const normalizedPhone = normalizeEgyptMobile(typeof lead.phone === 'string' ? lead.phone : '');
-  if (!normalizedPhone) return null;
+  const explicitProfileDetails = normalizeNullableString(lead.profileDetails, 300);
+  const occupationCandidateEntries = Object.entries(lead).filter(([key]) => /occupation|job|title|company|وظيف|مهن|الشغل|المسمى|الشركة/i.test(String(key)));
+  const explicitOccupation = buildBulkProfileDetails([
+    lead.occupation,
+    lead.job,
+    lead.jobTitle,
+    lead['الوظيفة'],
+    lead['وظيفة'],
+    lead['المسمى الوظيفي'],
+    lead['المهنة'],
+    lead['الشغل'],
+    lead['company'],
+    lead['companyName'],
+    ...occupationCandidateEntries.map(([, value]) => value),
+  ], 300);
   const rawName = typeof lead.name === 'string'
     ? lead.name
     : (typeof lead['الاسم'] === 'string' ? lead['الاسم'] : '');
-  const normalizedName = normalizeLeadName(rawName);
+
+  if (normalizedPhone) {
+    const normalizedName = normalizeLeadName(rawName);
+    const resolvedProfileDetails = explicitProfileDetails || explicitOccupation;
+    return {
+      phone: normalizedPhone,
+      name: normalizedName,
+      hasProvidedName: hasValidProvidedName(rawName),
+      profileDetails: resolvedProfileDetails || null,
+      hasProvidedProfileDetails: !!resolvedProfileDetails,
+      gender: normalizeGender(lead.gender) || 'UNKNOWN',
+    };
+  }
+
+  const objectValues = Object.values(lead)
+    .map((value) => (typeof value === 'string' || typeof value === 'number' ? String(value).trim() : ''))
+    .filter(Boolean);
+  const inferredFromObjectValues = inferBulkRowParts(objectValues);
+  if (!inferredFromObjectValues) return null;
   return {
-    phone: normalizedPhone,
-    name: normalizedName,
-    hasProvidedName: hasValidProvidedName(rawName),
+    ...inferredFromObjectValues,
     gender: normalizeGender(lead.gender) || 'UNKNOWN',
   };
 };
@@ -2047,7 +2154,9 @@ async function startServer() {
         continue;
       }
       duplicatesInPayload += 1;
-      if (!existing.hasProvidedName && row.hasProvidedName) {
+      const shouldReplaceByName = !existing.hasProvidedName && row.hasProvidedName;
+      const shouldReplaceByProfileDetails = !existing.hasProvidedProfileDetails && row.hasProvidedProfileDetails;
+      if (shouldReplaceByName || shouldReplaceByProfileDetails) {
         deduplicatedMap.set(row.phone, row);
       }
     }
@@ -2111,7 +2220,7 @@ async function startServer() {
           tenantId: actor.tenantId,
           phone: { in: safeLeads.map((lead) => lead.phone) },
         },
-        select: { id: true, phone: true, name: true, hasProvidedName: true },
+        select: { id: true, phone: true, name: true, hasProvidedName: true, profileDetails: true },
       });
       const existingByPhone = new Map(existingLeads.map((lead) => [lead.phone, lead]));
       const freshLeads = safeLeads.filter((lead) => !existingByPhone.has(lead.phone));
@@ -2122,15 +2231,23 @@ async function startServer() {
           const existing = existingByPhone.get(row.phone);
           if (!existing) continue;
           const shouldUpgradeName = row.hasProvidedName && (!existing.hasProvidedName || existing.name === UNKNOWN_LEAD_NAME);
-          if (!shouldUpgradeName) continue;
+          const shouldUpgradeProfileDetails = row.hasProvidedProfileDetails && !normalizeNullableString(existing.profileDetails, 120);
+          if (!shouldUpgradeName && !shouldUpgradeProfileDetails) continue;
           await prisma.lead.update({
             where: { id: existing.id },
             data: {
-              name: row.name,
-              hasProvidedName: true,
+              ...(shouldUpgradeName
+                ? {
+                  name: row.name,
+                  hasProvidedName: true,
+                }
+                : {}),
+              ...(shouldUpgradeProfileDetails
+                ? { profileDetails: row.profileDetails }
+                : {}),
             },
           });
-          upgradedNames += 1;
+          if (shouldUpgradeName) upgradedNames += 1;
         }
       }
       let inserted = 0;
@@ -2142,6 +2259,7 @@ async function startServer() {
                 name: lead.name,
                 phone: lead.phone,
                 gender: lead.gender || 'UNKNOWN',
+                profileDetails: lead.profileDetails || null,
                 hasProvidedName: !!lead.hasProvidedName,
                 status: POOL_STATUS,
                 source: POOL_SOURCE,
