@@ -15,6 +15,8 @@ import TeamManagement from './pages/admin/TeamManagement';
 import EmployeePerformance from './pages/admin/EmployeePerformance';
 import SimCards from './pages/admin/SimCards';
 import FaqManagement from './pages/admin/FaqManagement';
+import SalesTipsManagement from './pages/admin/SalesTipsManagement';
+import SystemGuide from './pages/SystemGuide';
 import PrivateRoute from './components/PrivateRoute';
 import AdminRoute from './components/AdminRoute';
 import SuperAdminRoute from './components/SuperAdminRoute';
@@ -38,6 +40,7 @@ function App() {
             <Route path="leads/new" element={<AddLead />} />
             <Route path="templates" element={<Templates />} />
             <Route path="suggestions" element={<Suggestions />} />
+            <Route path="system-guide" element={<SystemGuide />} />
             
             {/* Admin Only Routes */}
             <Route path="admin" element={<AdminRoute />}>
@@ -46,6 +49,7 @@ function App() {
               <Route path="teams" element={<TeamManagement />} />
               <Route path="sim-cards" element={<SimCards />} />
               <Route path="faqs" element={<FaqManagement />} />
+              <Route path="sales-tips" element={<SalesTipsManagement />} />
               <Route element={<SuperAdminRoute />}>
                 <Route path="upload" element={<UploadLeads />} />
                 <Route path="pooled-numbers" element={<PooledNumbers />} />

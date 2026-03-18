@@ -14,7 +14,9 @@ import {
   Filter,
   MessageCircle,
   PieChart as PieChartIcon,
-  BellRing
+  BellRing,
+  Lightbulb,
+  X
 } from 'lucide-react';
 import clsx from 'clsx';
 import api from '../services/api';
@@ -76,6 +78,16 @@ interface Team {
   name: string;
 }
 
+interface SalesTip {
+  id: number;
+  title: string;
+  content: string;
+  category?: string | null;
+  sourceType?: string;
+  sourceTitle?: string | null;
+  sourceUrl?: string | null;
+}
+
 import VipFeatureAnnouncement from '../components/VipFeatureAnnouncement';
 
 export default function Dashboard() {
@@ -90,6 +102,8 @@ export default function Dashboard() {
   const [vipClaiming, setVipClaiming] = useState(false);
   const [vipStatus, setVipStatus] = useState<{ dailyLimit: number, claimedToday: number, remaining: number, isManual: boolean } | null>(null);
   const [testingNotification, setTestingNotification] = useState(false);
+  const [openingSalesTips, setOpeningSalesTips] = useState<SalesTip[]>([]);
+  const [tipsModalOpen, setTipsModalOpen] = useState(false);
   const isFetchingRef = useRef(false);
   const invalidateTimerRef = useRef<number | null>(null);
 
@@ -128,10 +142,28 @@ export default function Dashboard() {
     }
   };
 
+  const fetchOpeningSalesTips = async () => {
+    if (user?.role !== 'SALES') return;
+    const sessionKey = `crm:sales-tips:shown:${new Date().toISOString().slice(0, 10)}`;
+    if (sessionStorage.getItem(sessionKey) === '1') return;
+    try {
+      const response = await api.get('/sales-tips/on-open');
+      const tips = Array.isArray(response.data?.tips) ? response.data.tips : [];
+      if (tips.length) {
+        setOpeningSalesTips(tips);
+        setTipsModalOpen(true);
+      }
+      sessionStorage.setItem(sessionKey, '1');
+    } catch (error) {
+      console.error('Failed to load opening sales tips', error);
+    }
+  };
+
   useEffect(() => {
     fetchTeams();
     if (user?.role === 'SALES') {
       fetchVipStatus();
+      fetchOpeningSalesTips();
     }
   }, [user?.role]);
 
@@ -319,6 +351,39 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {user?.role === 'SALES' && tipsModalOpen && openingSalesTips.length > 0 && (
+        <div className="glass-card p-5 border border-amber-200 bg-amber-50/60">
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <div className="flex items-center gap-2">
+              <Lightbulb className="text-amber-600" size={20} />
+              <h3 className="text-lg font-black text-amber-900">نصائح سريعة لبداية اليوم</h3>
+            </div>
+            <button
+              type="button"
+              onClick={() => setTipsModalOpen(false)}
+              className="p-1 rounded-md text-slate-500 hover:bg-white"
+              title="إخفاء"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <div className="space-y-3">
+            {openingSalesTips.map((tip) => (
+              <div key={tip.id} className="rounded-xl bg-white border border-amber-100 p-3">
+                <p className="text-sm font-black text-slate-800">{tip.title}</p>
+                <p className="text-sm text-slate-700 mt-1 leading-7">{tip.content}</p>
+                {(tip.sourceTitle || tip.sourceUrl) && (
+                  <p className="text-[11px] text-slate-500 mt-2">
+                    المصدر: {tip.sourceTitle || 'مرجع خارجي'}
+                    {tip.sourceUrl ? ` — ${tip.sourceUrl}` : ''}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-8 gap-3 md:gap-4">
         {statCards.map((stat, index) => (
@@ -566,6 +631,11 @@ export default function Dashboard() {
                       <p className="text-[10px] md:text-xs font-bold text-slate-500 flex items-center gap-1 font-medium">
                         <TrendingUp size={12} className="text-emerald-500" />
                         {member.callsToday} مكالمة
+                      </p>
+                      <div className="w-1 h-1 rounded-full bg-slate-300" />
+                      <p className="text-[10px] md:text-xs font-bold text-cyan-600 flex items-center gap-1 font-black">
+                        <MessageCircle size={12} />
+                        {member.interestedToday ?? 0} مهتم
                       </p>
                       <div className="w-1 h-1 rounded-full bg-slate-300" />
                       <p className="text-[10px] md:text-xs font-bold text-emerald-600 flex items-center gap-1 font-black">

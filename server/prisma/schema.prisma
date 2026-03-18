@@ -32,6 +32,8 @@ model User {
   createdReleaseNotes ReleaseNote[] @relation("ReleaseNoteCreatedBy")
   createdFaqs      FAQ[]            @relation("FaqCreatedBy")
   updatedFaqs      FAQ[]            @relation("FaqUpdatedBy")
+  createdSalesTips SalesTip[]       @relation("SalesTipCreatedBy")
+  updatedSalesTips SalesTip[]       @relation("SalesTipUpdatedBy")
 
   @@index([tenantId])
   @@index([teamId])
@@ -178,6 +180,7 @@ model Tenant {
   messageTemplates MessageTemplate[]
   suggestions      Suggestion[]
   faqs             FAQ[]
+  salesTips        SalesTip[]
   releaseNotes     ReleaseNote[]
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
@@ -203,6 +206,7 @@ model Suggestion {
 
 model FAQ {
   id          Int      @id @default(autoincrement())
+  type        String   @default("CALL_SUPPORT") // CALL_SUPPORT, SYSTEM_GUIDE
   question    String
   answer      String
   category    String?
@@ -214,6 +218,29 @@ model FAQ {
   createdBy   User?    @relation("FaqCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   updatedById Int?
   updatedBy   User?    @relation("FaqUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId, type, isPublished])
+  @@index([tenantId, sortOrder])
+}
+
+model SalesTip {
+  id          Int      @id @default(autoincrement())
+  title       String
+  content     String
+  category    String?
+  sortOrder   Int      @default(0)
+  isPublished Boolean  @default(true)
+  sourceType  String   @default("MANUAL") // MANUAL, AI_GENERATED, WEB
+  sourceTitle String?
+  sourceUrl   String?
+  tenantId    Int
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  createdById Int?
+  createdBy   User?    @relation("SalesTipCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedById Int?
+  updatedBy   User?    @relation("SalesTipUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

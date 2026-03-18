@@ -18,7 +18,8 @@ import {
   Loader2,
   Smartphone,
   Lightbulb,
-  HelpCircle
+  HelpCircle,
+  BookOpenText
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from '../../store/useStore';
@@ -71,6 +72,7 @@ export default function Sidebar() {
     { to: '/leads/new', icon: UserPlus, label: 'إضافة عميل جديد' },
     { to: '/templates', icon: MessageSquare, label: 'قوالب الرسائل' },
     { to: '/suggestions', icon: Lightbulb, label: 'الاقتراحات' },
+    { to: '/system-guide', icon: BookOpenText, label: 'دليل النظام' },
   ];
 
   const adminItems = [
@@ -80,9 +82,10 @@ export default function Sidebar() {
     { to: '/admin/upload', icon: Upload, label: 'رفع داتا أرقام' },
     { to: '/admin/pooled-numbers', icon: Database, label: 'الأرقام المجمعة' },
     { to: '/admin/faqs', icon: HelpCircle, label: 'إدارة FAQ' },
+    { to: '/admin/sales-tips', icon: Lightbulb, label: 'نصائح السالز' },
   ];
   const visibleAdminItems = user?.role === 'TEAM_LEAD'
-    ? adminItems.filter((item) => item.to === '/admin/employees' || item.to === '/admin/teams' || item.to === '/admin/faqs')
+    ? adminItems.filter((item) => item.to === '/admin/employees' || item.to === '/admin/teams' || item.to === '/admin/faqs' || item.to === '/admin/sales-tips')
     : adminItems;
 
   return (

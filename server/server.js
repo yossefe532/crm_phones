@@ -67,6 +67,8 @@ const DEFAULT_TEMPLATES = [
   { status: 'NO_ANSWER', content: 'السلام عليكم {customer_title} {customer_name}، حاولنا نتواصل مع حضرتك اليوم لكن ماكانش فيه رد. لو مناسب لحضرتك ابعتلنا وقت مناسب وهنكلمك فوراً.' },
   { status: 'WRONG_NUMBER', content: 'نعتذر، تم تسجيل أن الرقم غير صحيح. برجاء التأكد من الرقم الصحيح إذا رغبت بالتواصل.' },
 ];
+const FAQ_TYPES = new Set(['CALL_SUPPORT', 'SYSTEM_GUIDE']);
+const SALES_TIP_SOURCE_TYPES = new Set(['MANUAL', 'AI_GENERATED', 'WEB']);
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '';
 const allowedOrigins = CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean);
 const ASSISTANT_TRAINING_FILE = join(__dirname, 'assistant-training.json');
@@ -370,6 +372,18 @@ const normalizeNullableString = (value, maxLength = 120) => {
   return trimmed.slice(0, maxLength);
 };
 
+const normalizeFaqType = (value, fallback = null) => {
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim().toUpperCase();
+  return FAQ_TYPES.has(normalized) ? normalized : fallback;
+};
+
+const normalizeSalesTipSourceType = (value, fallback = null) => {
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim().toUpperCase();
+  return SALES_TIP_SOURCE_TYPES.has(normalized) ? normalized : fallback;
+};
+
 const normalizeEmail = (value) => {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim().toLowerCase();
@@ -605,6 +619,144 @@ const fetchWebInsights = async (query) => {
     }
   }
   return insights.slice(0, 3);
+};
+
+const fetchWebSources = async (query) => {
+  const normalizedQuery = normalizeNullableString(query, 180);
+  if (!normalizedQuery) return [];
+  const encoded = encodeURIComponent(normalizedQuery);
+  const result = await fetchJsonWithTimeout(`https://api.duckduckgo.com/?q=${encoded}&format=json&no_html=1&skip_disambig=1`, {}, 3000);
+  if (!result) return [];
+
+  const sources = [];
+  if (typeof result.AbstractText === 'string' && result.AbstractText.trim()) {
+    sources.push({
+      title: normalizeNullableString(result.Heading, 180) || normalizeNullableString(result.AbstractSource, 120) || 'DuckDuckGo Abstract',
+      snippet: normalizeNullableString(result.AbstractText, 500),
+      url: normalizeNullableString(result.AbstractURL, 400),
+    });
+  }
+
+  if (Array.isArray(result.RelatedTopics)) {
+    for (const topic of result.RelatedTopics) {
+      if (sources.length >= 5) break;
+      if (topic && typeof topic.Text === 'string' && topic.Text.trim()) {
+        sources.push({
+          title: normalizeNullableString(topic.Text.split('-')[0] || 'Related Topic', 180) || 'Related Topic',
+          snippet: normalizeNullableString(topic.Text, 500),
+          url: normalizeNullableString(topic.FirstURL, 400),
+        });
+      } else if (Array.isArray(topic?.Topics)) {
+        for (const nested of topic.Topics) {
+          if (sources.length >= 5) break;
+          if (nested && typeof nested.Text === 'string' && nested.Text.trim()) {
+            sources.push({
+              title: normalizeNullableString(nested.Text.split('-')[0] || 'Related Topic', 180) || 'Related Topic',
+              snippet: normalizeNullableString(nested.Text, 500),
+              url: normalizeNullableString(nested.FirstURL, 400),
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return sources
+    .filter((item) => item.snippet)
+    .map((item, idx) => ({
+      id: idx + 1,
+      title: item.title,
+      snippet: item.snippet,
+      url: item.url || null,
+      sourceType: 'WEB',
+    }))
+    .slice(0, 5);
+};
+
+const buildFallbackAiSalesTips = ({ topic, salesContext, sources = [] }) => {
+  const contextLine = [topic, salesContext].filter(Boolean).join(' - ');
+  const baseTips = [
+    'ابدأ المكالمة بهدف واضح وسؤال اكتشاف مباشر في أول 20 ثانية.',
+    'عالج الاعتراض بإعادة صياغة المشكلة ثم اقترح خطوة واحدة واضحة.',
+    'اختم المكالمة بإجراء محدد (موعد متابعة/رسالة واتساب/إرسال عرض).',
+  ];
+  const tips = baseTips.map((content, idx) => ({
+    title: `نصيحة ${idx + 1}`,
+    content: contextLine ? `${content} (السياق: ${contextLine})` : content,
+    sourceType: 'AI_GENERATED',
+    sourceTitle: sources[0]?.title || null,
+    sourceUrl: sources[0]?.url || null,
+  }));
+  return tips.slice(0, 3);
+};
+
+const generateAiSalesTips = async ({ topic, salesContext, sources = [] }) => {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return buildFallbackAiSalesTips({ topic, salesContext, sources });
+
+  const sourceContext = sources
+    .map((source, idx) => `[${idx + 1}] ${source.title}${source.url ? ` | ${source.url}` : ''} | ${source.snippet}`)
+    .join('\n');
+  const prompt = `أنت كوتش مبيعات.
+أنشئ 3 نصائح قصيرة قابلة للتطبيق لفريق مبيعات.
+الموضوع: ${topic || 'تحسين أداء المبيعات'}
+سياق إضافي: ${salesContext || 'غير متاح'}
+مصادر مرجعية:
+${sourceContext || 'لا يوجد'}
+
+أعد النتيجة JSON فقط بالشكل:
+{"tips":[{"title":"...","content":"...","sourceIndex":1}]}
+- sourceIndex يشير لرقم المصدر المستخدم من القائمة [1..N]، أو 0 إن لم يستخدم مصدر.
+- لا تضف أي نص خارج JSON.`;
+
+  const response = await fetchJsonWithTimeout(
+    'https://api.openai.com/v1/chat/completions',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        temperature: 0.3,
+        messages: [
+          { role: 'system', content: 'You output strict JSON only.' },
+          { role: 'user', content: prompt },
+        ],
+      }),
+    },
+    10000,
+  );
+
+  const raw = response?.choices?.[0]?.message?.content;
+  if (typeof raw !== 'string' || !raw.trim()) return buildFallbackAiSalesTips({ topic, salesContext, sources });
+
+  try {
+    const parsed = JSON.parse(raw);
+    const tips = Array.isArray(parsed?.tips) ? parsed.tips : [];
+    const normalized = tips
+      .map((tip) => {
+        const title = normalizeNullableString(tip?.title, 120);
+        const content = normalizeNullableString(tip?.content, 600);
+        if (!title || !content) return null;
+        const sourceIndex = parseInteger(tip?.sourceIndex);
+        const source = sourceIndex && sourceIndex > 0 ? sources[sourceIndex - 1] : null;
+        return {
+          title,
+          content,
+          sourceType: source ? 'WEB' : 'AI_GENERATED',
+          sourceTitle: source?.title || null,
+          sourceUrl: source?.url || null,
+        };
+      })
+      .filter(Boolean);
+
+    if (normalized.length) return normalized.slice(0, 3);
+    return buildFallbackAiSalesTips({ topic, salesContext, sources });
+  } catch {
+    return buildFallbackAiSalesTips({ topic, salesContext, sources });
+  }
 };
 
 const buildFallbackScript = ({ leadName, trainingTopic, trainingContext, occupation, age, education, goals, notes, webInsights }) => {
@@ -5041,8 +5193,13 @@ async function startServer() {
       if (actorTenantError) return res.status(400).json({ error: actorTenantError });
 
       const includeUnpublished = String(req.query.includeUnpublished || '').toLowerCase() === 'true';
+      const faqType = normalizeFaqType(req.query.type, null);
+      if (Object.prototype.hasOwnProperty.call(req.query, 'type') && !faqType) {
+        return res.status(400).json({ error: 'Invalid FAQ type. Allowed: CALL_SUPPORT, SYSTEM_GUIDE' });
+      }
       const where = {
         tenantId: actor.tenantId,
+        ...(faqType ? { type: faqType } : {}),
         ...(includeUnpublished && (actor.role === 'ADMIN' || actor.role === 'TEAM_LEAD') ? {} : { isPublished: true }),
       };
       const faqs = await prisma.fAQ.findMany({
@@ -5064,9 +5221,11 @@ async function startServer() {
     const question = normalizeNullableString(req.body?.question, 500);
     const answer = normalizeNullableString(req.body?.answer, 4000);
     const category = normalizeNullableString(req.body?.category, 120);
+    const type = normalizeFaqType(req.body?.type, 'CALL_SUPPORT');
     const sortOrder = parseInteger(req.body?.sortOrder) ?? 0;
     const isPublished = req.body?.isPublished !== false;
     if (!question || !answer) return res.status(400).json({ error: 'question and answer are required' });
+    if (!type) return res.status(400).json({ error: 'Invalid FAQ type. Allowed: CALL_SUPPORT, SYSTEM_GUIDE' });
     if (!Number.isInteger(sortOrder)) return res.status(400).json({ error: 'Invalid sortOrder' });
 
     try {
@@ -5077,6 +5236,7 @@ async function startServer() {
 
       const created = await prisma.fAQ.create({
         data: {
+          type,
           question,
           answer,
           category,
@@ -5111,6 +5271,11 @@ async function startServer() {
         const question = normalizeNullableString(req.body?.question, 500);
         if (!question) return res.status(400).json({ error: 'Invalid question' });
         payload.question = question;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'type')) {
+        const type = normalizeFaqType(req.body?.type, null);
+        if (!type) return res.status(400).json({ error: 'Invalid FAQ type. Allowed: CALL_SUPPORT, SYSTEM_GUIDE' });
+        payload.type = type;
       }
       if (Object.prototype.hasOwnProperty.call(req.body, 'answer')) {
         const answer = normalizeNullableString(req.body?.answer, 4000);
@@ -5154,6 +5319,240 @@ async function startServer() {
     } catch (error) {
       console.error(error);
       return res.status(500).json({ error: 'Failed to delete FAQ' });
+    }
+  });
+
+  // --- Sales Tips Routes ---
+
+  app.get('/api/sales-tips', authenticateToken, async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const includeUnpublished = String(req.query.includeUnpublished || '').toLowerCase() === 'true';
+      const category = normalizeNullableString(req.query.category, 120);
+      const sourceType = normalizeSalesTipSourceType(req.query.sourceType, null);
+      if (Object.prototype.hasOwnProperty.call(req.query, 'sourceType') && !sourceType) {
+        return res.status(400).json({ error: 'Invalid sourceType. Allowed: MANUAL, AI_GENERATED, WEB' });
+      }
+      const where = {
+        tenantId: actor.tenantId,
+        ...(category ? { category } : {}),
+        ...(sourceType ? { sourceType } : {}),
+        ...(includeUnpublished && (actor.role === 'ADMIN' || actor.role === 'TEAM_LEAD') ? {} : { isPublished: true }),
+      };
+      const tips = await prisma.salesTip.findMany({
+        where,
+        include: {
+          createdBy: { select: { id: true, name: true } },
+          updatedBy: { select: { id: true, name: true } },
+        },
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+      });
+      return res.json(tips);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch sales tips' });
+    }
+  });
+
+  app.get('/api/sales-tips/on-open', authenticateToken, authorizeRole(['SALES']), async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const tips = await prisma.salesTip.findMany({
+        where: { tenantId: actor.tenantId, isPublished: true },
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+        take: 3,
+      });
+      return res.json({
+        shownAt: new Date().toISOString(),
+        total: tips.length,
+        tips,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to load opening sales tips' });
+    }
+  });
+
+  app.post('/api/admin/sales-tips', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const title = normalizeNullableString(req.body?.title, 120);
+    const content = normalizeNullableString(req.body?.content, 2000);
+    const category = normalizeNullableString(req.body?.category, 120);
+    const sourceType = normalizeSalesTipSourceType(req.body?.sourceType, 'MANUAL');
+    const sourceTitle = normalizeNullableString(req.body?.sourceTitle, 160);
+    const sourceUrl = normalizeNullableString(req.body?.sourceUrl, 400);
+    const sortOrder = parseInteger(req.body?.sortOrder) ?? 0;
+    const isPublished = req.body?.isPublished !== false;
+    if (!title || !content) return res.status(400).json({ error: 'title and content are required' });
+    if (!sourceType) return res.status(400).json({ error: 'Invalid sourceType. Allowed: MANUAL, AI_GENERATED, WEB' });
+    if (!Number.isInteger(sortOrder)) return res.status(400).json({ error: 'Invalid sortOrder' });
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const created = await prisma.salesTip.create({
+        data: {
+          title,
+          content,
+          category,
+          sourceType,
+          sourceTitle,
+          sourceUrl,
+          sortOrder,
+          isPublished: Boolean(isPublished),
+          tenantId: actor.tenantId,
+          createdById: actor.id,
+          updatedById: actor.id,
+        },
+      });
+      return res.status(201).json(created);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to create sales tip' });
+    }
+  });
+
+  app.put('/api/admin/sales-tips/:id', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const tipId = parseInteger(req.params.id);
+    if (tipId === null || tipId < 1) return res.status(400).json({ error: 'Invalid sales tip id' });
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const existing = await prisma.salesTip.findFirst({
+        where: { id: tipId, tenantId: actor.tenantId },
+        select: { id: true },
+      });
+      if (!existing) return res.status(404).json({ error: 'Sales tip not found' });
+
+      const payload = {};
+      if (Object.prototype.hasOwnProperty.call(req.body, 'title')) {
+        const title = normalizeNullableString(req.body?.title, 120);
+        if (!title) return res.status(400).json({ error: 'Invalid title' });
+        payload.title = title;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'content')) {
+        const content = normalizeNullableString(req.body?.content, 2000);
+        if (!content) return res.status(400).json({ error: 'Invalid content' });
+        payload.content = content;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'category')) {
+        payload.category = normalizeNullableString(req.body?.category, 120);
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'sourceType')) {
+        const sourceType = normalizeSalesTipSourceType(req.body?.sourceType, null);
+        if (!sourceType) return res.status(400).json({ error: 'Invalid sourceType. Allowed: MANUAL, AI_GENERATED, WEB' });
+        payload.sourceType = sourceType;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'sourceTitle')) {
+        payload.sourceTitle = normalizeNullableString(req.body?.sourceTitle, 160);
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'sourceUrl')) {
+        payload.sourceUrl = normalizeNullableString(req.body?.sourceUrl, 400);
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'sortOrder')) {
+        const sortOrder = parseInteger(req.body?.sortOrder);
+        if (sortOrder === null) return res.status(400).json({ error: 'Invalid sortOrder' });
+        payload.sortOrder = sortOrder;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'isPublished')) {
+        if (typeof req.body.isPublished !== 'boolean') return res.status(400).json({ error: 'isPublished must be boolean' });
+        payload.isPublished = req.body.isPublished;
+      }
+      payload.updatedById = actor.id;
+
+      const updated = await prisma.salesTip.update({ where: { id: tipId }, data: payload });
+      return res.json(updated);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to update sales tip' });
+    }
+  });
+
+  app.delete('/api/admin/sales-tips/:id', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const tipId = parseInteger(req.params.id);
+    if (tipId === null || tipId < 1) return res.status(400).json({ error: 'Invalid sales tip id' });
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const deleted = await prisma.salesTip.deleteMany({ where: { id: tipId, tenantId: actor.tenantId } });
+      if (!deleted.count) return res.status(404).json({ error: 'Sales tip not found' });
+      return res.json({ message: 'Sales tip deleted successfully' });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to delete sales tip' });
+    }
+  });
+
+  app.post('/api/sales-tips/ai-generate', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const topic = normalizeNullableString(req.body?.topic, 180);
+    const salesContext = normalizeNullableString(req.body?.salesContext, 700) || '';
+    const searchWeb = req.body?.searchWeb !== false;
+    const save = req.body?.save === true;
+    const requestedType = normalizeFaqType(req.body?.faqType, null);
+    if (!topic) return res.status(400).json({ error: 'topic is required' });
+    if (Object.prototype.hasOwnProperty.call(req.body, 'faqType') && !requestedType) {
+      return res.status(400).json({ error: 'Invalid faqType. Allowed: CALL_SUPPORT, SYSTEM_GUIDE' });
+    }
+
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const query = [topic, salesContext].filter(Boolean).join(' ');
+      const sources = searchWeb ? await fetchWebSources(query) : [];
+      const aiTips = await generateAiSalesTips({ topic, salesContext, sources });
+      const savedTips = [];
+      if (save && aiTips.length) {
+        for (const [index, tip] of aiTips.entries()) {
+          const created = await prisma.salesTip.create({
+            data: {
+              title: tip.title,
+              content: tip.content,
+              category: topic,
+              sortOrder: index,
+              isPublished: true,
+              sourceType: tip.sourceType || 'AI_GENERATED',
+              sourceTitle: tip.sourceTitle || null,
+              sourceUrl: tip.sourceUrl || null,
+              tenantId: actor.tenantId,
+              createdById: actor.id,
+              updatedById: actor.id,
+            },
+          });
+          savedTips.push(created);
+        }
+      }
+
+      return res.json({
+        topic,
+        salesContext,
+        faqType: requestedType || null,
+        generatedAt: new Date().toISOString(),
+        tips: aiTips,
+        sources,
+        savedCount: savedTips.length,
+        savedTips,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to generate AI sales tips' });
     }
   });
 

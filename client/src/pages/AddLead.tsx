@@ -147,7 +147,7 @@ export default function AddLead() {
       }
       try {
         setFaqLoading(true);
-        const faqsRes = await api.get('/faqs');
+        const faqsRes = await api.get('/faqs', { params: { type: 'CALL_SUPPORT' } });
         setFaqItems(Array.isArray(faqsRes.data) ? faqsRes.data : []);
         setFaqError('');
       } catch {

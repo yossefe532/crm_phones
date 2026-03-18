@@ -125,30 +125,35 @@ async function main() {
 
   const defaultFaqs = [
     {
+      type: 'CALL_SUPPORT',
       question: 'كيف أستخدم FAQ أثناء المكالمة؟',
       answer: 'ادخل صفحة "إضافة عميل جديد" وستجد قسم "FAQ سريع أثناء المكالمة" بأسئلة جاهزة. اختر السؤال المناسب لعرض الإجابة فورًا وتوجيه العميل بسرعة.',
       category: 'FAQ',
       sortOrder: 1,
     },
     {
+      type: 'SYSTEM_GUIDE',
       question: 'من المسؤول عن تحديث الأسئلة الشائعة؟',
       answer: 'إدارة FAQ متاحة الآن لكل من ADMIN وTEAM_LEAD من شاشة "إدارة FAQ"، ويمكنهم إضافة سؤال جديد أو تعديل الإجابات أو إخفاء العناصر غير المناسبة.',
       category: 'FAQ',
       sortOrder: 2,
     },
     {
+      type: 'CALL_SUPPORT',
       question: 'ما الفرق بين الحالة INTERESTED و AGREED؟',
       answer: 'INTERESTED تعني أن العميل مهتم ويحتاج متابعة، أما AGREED فتعني موافقة واضحة ونهائية على الخطوة المطلوبة.',
       category: 'الحالات',
       sortOrder: 3,
     },
     {
+      type: 'SYSTEM_GUIDE',
       question: 'كيف أرسل اقتراحًا لتحسين النظام؟',
       answer: 'من صفحة "الاقتراحات" اكتب اقتراحك بشكل واضح وسيصل مباشرة للإدارة. يمكن متابعة حالة الرد من نفس الصفحة.',
       category: 'الاقتراحات',
       sortOrder: 4,
     },
     {
+      type: 'SYSTEM_GUIDE',
       question: 'أين أجد الأهداف اليومية للمكالمات والمهتمين؟',
       answer: 'ستجد الأهداف اليومية في لوحة التحكم، وتشمل: المكالمات، المهتمين، والموافقات مع عرض المنجز والمتبقي لكل مؤشر.',
       category: 'التارجت',
@@ -169,6 +174,7 @@ async function main() {
           )?.id || -1,
         },
         update: {
+          type: faq.type,
           answer: faq.answer,
           category: faq.category,
           sortOrder: faq.sortOrder,
@@ -176,6 +182,7 @@ async function main() {
         },
         create: {
           tenantId: tenant.id,
+          type: faq.type,
           question: faq.question,
           answer: faq.answer,
           category: faq.category,
@@ -183,6 +190,56 @@ async function main() {
           isPublished: true,
         },
       });
+    }
+  }
+
+  const defaultSalesTips = [
+    {
+      title: 'ابدأ بسؤال اكتشاف واضح',
+      content: 'ابدأ المكالمة بسؤال مباشر: "إيه أهم نتيجة حضرتك عايز توصل لها؟" ثم اربط العرض بهذه النتيجة.',
+      category: 'الافتتاح',
+      sortOrder: 1,
+      sourceType: 'MANUAL',
+    },
+    {
+      title: 'اعرض خيارين بدل سؤال مفتوح',
+      content: 'عند التردد، قدّم خيارين واضحين للخطوة التالية بدل ترك القرار مفتوحاً بالكامل.',
+      category: 'التعامل مع الاعتراض',
+      sortOrder: 2,
+      sourceType: 'MANUAL',
+    },
+  ];
+
+  for (const tenant of tenants) {
+    for (const tip of defaultSalesTips) {
+      const existing = await prisma.salesTip.findFirst({
+        where: { tenantId: tenant.id, title: tip.title },
+        select: { id: true },
+      });
+      if (existing) {
+        await prisma.salesTip.update({
+          where: { id: existing.id },
+          data: {
+            content: tip.content,
+            category: tip.category,
+            sortOrder: tip.sortOrder,
+            sourceType: tip.sourceType,
+            isPublished: true,
+          },
+        });
+      } else {
+        await prisma.salesTip.create({
+          data: {
+            tenantId: tenant.id,
+            title: tip.title,
+            content: tip.content,
+            category: tip.category,
+            sortOrder: tip.sortOrder,
+            sourceType: tip.sourceType,
+            isPublished: true,
+          },
+        });
+      }
     }
   }
 

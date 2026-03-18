@@ -4,6 +4,7 @@ import api from '../../services/api';
 
 interface FaqEntry {
   id: number;
+  type: 'CALL_SUPPORT' | 'SYSTEM_GUIDE';
   question: string;
   answer: string;
   category?: string | null;
@@ -14,6 +15,7 @@ interface FaqEntry {
 }
 
 interface DraftById {
+  type: 'CALL_SUPPORT' | 'SYSTEM_GUIDE';
   question: string;
   answer: string;
   category: string;
@@ -22,8 +24,13 @@ interface DraftById {
 }
 
 export default function FaqManagement() {
+  const FAQ_TYPES = [
+    { value: 'CALL_SUPPORT' as const, label: 'دعم المكالمة' },
+    { value: 'SYSTEM_GUIDE' as const, label: 'دليل النظام' },
+  ];
   const [items, setItems] = useState<FaqEntry[]>([]);
   const [drafts, setDrafts] = useState<Record<number, DraftById>>({});
+  const [activeType, setActiveType] = useState<'CALL_SUPPORT' | 'SYSTEM_GUIDE'>('CALL_SUPPORT');
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -31,6 +38,7 @@ export default function FaqManagement() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [newFaq, setNewFaq] = useState<DraftById>({
+    type: 'CALL_SUPPORT',
     question: '',
     answer: '',
     category: '',
@@ -44,12 +52,13 @@ export default function FaqManagement() {
     setLoading(true);
     setError('');
     try {
-      const response = await api.get('/faqs?includeUnpublished=true');
+      const response = await api.get('/faqs', { params: { includeUnpublished: true, type: activeType } });
       const rows = Array.isArray(response.data) ? response.data : [];
       setItems(rows);
       setDrafts(
         rows.reduce((acc: Record<number, DraftById>, row: FaqEntry) => {
           acc[row.id] = {
+            type: row.type || 'CALL_SUPPORT',
             question: row.question || '',
             answer: row.answer || '',
             category: row.category || '',
@@ -68,7 +77,7 @@ export default function FaqManagement() {
 
   useEffect(() => {
     void fetchFaqs();
-  }, []);
+  }, [activeType]);
 
   const handleCreate = async () => {
     setError('');
@@ -80,6 +89,7 @@ export default function FaqManagement() {
     setCreating(true);
     try {
       await api.post('/admin/faqs', {
+        type: newFaq.type,
         question: newFaq.question.trim(),
         answer: newFaq.answer.trim(),
         category: newFaq.category.trim() || null,
@@ -87,7 +97,7 @@ export default function FaqManagement() {
         isPublished: newFaq.isPublished,
       });
       setSuccess('تم إنشاء عنصر FAQ بنجاح');
-      setNewFaq({ question: '', answer: '', category: '', sortOrder: 0, isPublished: true });
+      setNewFaq({ type: activeType, question: '', answer: '', category: '', sortOrder: 0, isPublished: true });
       await fetchFaqs();
     } catch (err: any) {
       setError(err?.response?.data?.error || 'تعذر إنشاء عنصر FAQ');
@@ -104,6 +114,7 @@ export default function FaqManagement() {
     setSuccess('');
     try {
       await api.put(`/admin/faqs/${faqId}`, {
+        type: row.type,
         question: row.question.trim(),
         answer: row.answer.trim(),
         category: row.category.trim() || null,
@@ -149,6 +160,21 @@ export default function FaqManagement() {
           <span className="font-bold">إجمالي العناصر: {items.length}</span>
         </div>
         <div className="text-sm text-slate-500">المنشور حالياً: {publishedCount}</div>
+        <div className="flex items-center gap-2">
+          {FAQ_TYPES.map((t) => (
+            <button
+              key={t.value}
+              type="button"
+              onClick={() => {
+                setActiveType(t.value);
+                setNewFaq((prev) => ({ ...prev, type: t.value }));
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${activeType === t.value ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200'}`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {success && (
@@ -177,6 +203,15 @@ export default function FaqManagement() {
             value={newFaq.question}
             onChange={(e) => setNewFaq((prev) => ({ ...prev, question: e.target.value }))}
           />
+          <select
+            className="input-field"
+            value={newFaq.type}
+            onChange={(e) => setNewFaq((prev) => ({ ...prev, type: e.target.value as DraftById['type'] }))}
+          >
+            {FAQ_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
           <input
             className="input-field"
             placeholder="التصنيف (اختياري) مثل: اعتراضات"
@@ -230,6 +265,15 @@ export default function FaqManagement() {
                     value={draft.question}
                     onChange={(e) => setDrafts((prev) => ({ ...prev, [item.id]: { ...draft, question: e.target.value } }))}
                   />
+                  <select
+                    className="input-field"
+                    value={draft.type}
+                    onChange={(e) => setDrafts((prev) => ({ ...prev, [item.id]: { ...draft, type: e.target.value as DraftById['type'] } }))}
+                  >
+                    {FAQ_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
+                  </select>
                   <input
                     className="input-field"
                     value={draft.category}
