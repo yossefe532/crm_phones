@@ -102,12 +102,12 @@ async function main() {
 
   // Default Templates
   const defaultTemplates = [
-    { status: 'INTERESTED', content: 'شكراً يا {customer_title} {customer_name} على اهتمامك. مع حضرتك {user_name}، وهبعت لك التفاصيل كاملة وخطوة المتابعة القادمة.' },
-    { status: 'AGREED', content: 'السلام عليكم {customer_title} {customer_name}، مع حضرتك {user_name} من إيديكون. تم تأكيد موافقتك، وبرجاء إرسال التفاصيل النهائية.' },
-    { status: 'REJECTED', content: 'شكراً لوقتك {customer_title} {customer_name}، نتمنى لك التوفيق.' },
-    { status: 'HESITANT', content: 'السلام عليكم {customer_title} {customer_name}، مع حضرتك {user_name}. حبيت أتابع مع حضرتك لو في أي استفسار.' },
-    { status: 'SPONSOR', content: 'السلام عليكم {customer_title} {customer_name}، شكراً لاهتمامك بالرعاية. برجاء إرسال التفاصيل المطلوبة.' },
-    { status: 'NO_ANSWER', content: 'السلام عليكم {customer_title} {customer_name}، حاولنا نتواصل مع حضرتك اليوم لكن ماكانش فيه رد. لو مناسب لحضرتك ابعتلنا وقت مناسب وهنكلمك فوراً.' },
+    { status: 'INTERESTED', content: 'السلام عليكم {customer_title} {customer_name}، رقم حضرتك مترشح قصادي إنك تتقبل معانا في إيفينت مستر صلاح أبو المجد. مع حضرتك {user_name}، وهبعت لك التفاصيل كاملة وخطوة المتابعة القادمة.' },
+    { status: 'AGREED', content: 'السلام عليكم {customer_title} {customer_name}، رقم حضرتك مترشح قصادي إنك تتقبل معانا في إيفينت مستر صلاح أبو المجد. مع حضرتك {user_name} من إيديكون. تم تأكيد موافقتك، وبرجاء إرسال التفاصيل النهائية.' },
+    { status: 'REJECTED', content: 'السلام عليكم {customer_title} {customer_name}، رقم حضرتك مترشح قصادي إنك تتقبل معانا في إيفينت مستر صلاح أبو المجد. شكراً لوقتك ونتمنى لك التوفيق.' },
+    { status: 'HESITANT', content: 'السلام عليكم {customer_title} {customer_name}، رقم حضرتك مترشح قصادي إنك تتقبل معانا في إيفينت مستر صلاح أبو المجد. مع حضرتك {user_name}. حبيت أتابع مع حضرتك لو في أي استفسار.' },
+    { status: 'SPONSOR', content: 'السلام عليكم {customer_title} {customer_name}، رقم حضرتك مترشح قصادي إنك تتقبل معانا في إيفينت مستر صلاح أبو المجد. شكراً لاهتمامك بالرعاية. برجاء إرسال التفاصيل المطلوبة.' },
+    { status: 'NO_ANSWER', content: 'السلام عليكم {customer_title} {customer_name}، رقم حضرتك مترشح قصادي إنك تتقبل معانا في إيفينت مستر صلاح أبو المجد. حاولنا نتواصل مع حضرتك اليوم لكن ماكانش فيه رد. لو مناسب لحضرتك ابعتلنا وقت مناسب وهنكلمك فوراً.' },
   ];
 
   for (const t of defaultTemplates) {

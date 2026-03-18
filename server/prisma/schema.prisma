@@ -2,7 +2,7 @@
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "debian-openssl-1.1.x", "debian-openssl-3.0.x"]
 }
 
@@ -12,28 +12,34 @@ datasource db {
 }
 
 model User {
-  id              Int              @id @default(autoincrement())
-  name            String
-  email           String           @unique
-  password        String
-  role            String           // ADMIN, TEAM_LEAD, SALES
-  tenantId        Int
-  tenant          Tenant           @relation(fields: [tenantId], references: [id])
-  teamId          Int?
-  team            Team?            @relation(fields: [teamId], references: [id])
-  leads           Lead[]
-  interactions    Interaction[]
-  employeeProfile EmployeeProfile?
-  managedTeam     Team?            @relation("TeamLead")
-  pushSubscriptions PushSubscription[]
-  suggestions     Suggestion[]
-  answeredSuggestions Suggestion[]  @relation("SuggestionAnsweredBy")
-  releaseNoteReads ReleaseNoteRead[]
-  createdReleaseNotes ReleaseNote[] @relation("ReleaseNoteCreatedBy")
-  createdFaqs      FAQ[]            @relation("FaqCreatedBy")
-  updatedFaqs      FAQ[]            @relation("FaqUpdatedBy")
-  createdSalesTips SalesTip[]       @relation("SalesTipCreatedBy")
-  updatedSalesTips SalesTip[]       @relation("SalesTipUpdatedBy")
+  id                  Int                    @id @default(autoincrement())
+  name                String
+  email               String                 @unique
+  password            String
+  role                String // ADMIN, TEAM_LEAD, SALES
+  tenantId            Int
+  tenant              Tenant                 @relation(fields: [tenantId], references: [id])
+  teamId              Int?
+  team                Team?                  @relation(fields: [teamId], references: [id])
+  leads               Lead[]
+  interactions        Interaction[]
+  employeeProfile     EmployeeProfile?
+  managedTeam         Team?                  @relation("TeamLead")
+  pushSubscriptions   PushSubscription[]
+  suggestions         Suggestion[]
+  answeredSuggestions Suggestion[]           @relation("SuggestionAnsweredBy")
+  releaseNoteReads    ReleaseNoteRead[]
+  createdReleaseNotes ReleaseNote[]          @relation("ReleaseNoteCreatedBy")
+  createdFaqs         FAQ[]                  @relation("FaqCreatedBy")
+  updatedFaqs         FAQ[]                  @relation("FaqUpdatedBy")
+  createdSalesTips    SalesTip[]             @relation("SalesTipCreatedBy")
+  updatedSalesTips    SalesTip[]             @relation("SalesTipUpdatedBy")
+  followUpTasks       FollowUpTask[]
+  qaScorecardsGiven   QAScorecard[]          @relation("QAScorecardReviewer")
+  qaScorecardsForMe   QAScorecard[]          @relation("QAScorecardAgent")
+  createdAbTests      ABTest[]
+  abTestEvents        ABTestEvent[]
+  gamificationPoints  GamificationPointLog[]
 
   @@index([tenantId])
   @@index([teamId])
@@ -52,34 +58,37 @@ model PushSubscription {
 }
 
 model Lead {
-  id           Int           @id @default(autoincrement())
-  name         String
-  phone        String
-  whatsappPhone String?
-  profileDetails String?
-  gender       String        @default("UNKNOWN") // MALE, FEMALE, UNKNOWN
-  hasProvidedName Boolean    @default(false)
-  isHiddenFromSales Boolean  @default(false)
-  isVip        Boolean       @default(false)
-  claimedAt    DateTime?
-  status       String        // NEW, INTERESTED, AGREED, REJECTED, HESITANT, SPONSOR, NO_ANSWER, RECONTACT
-  source       String        // CALL, SEND, POOL
-  notes        String?
-  recontactAttempts Int      @default(0)
-  nextRecontactAt DateTime?
-  lastRecontactAt DateTime?
-  batchId      Int?
-  batch        LeadBatch?    @relation(fields: [batchId], references: [id])
-  tenantId     Int
-  tenant       Tenant        @relation(fields: [tenantId], references: [id])
-  agentId      Int?
-  agent        User?         @relation(fields: [agentId], references: [id])
-  teamId       Int?
-  team         Team?         @relation(fields: [teamId], references: [id])
-  courseId     Int?
-  course       Course?       @relation(fields: [courseId], references: [id])
-  createdAt    DateTime      @default(now())
-  interactions Interaction[]
+  id                Int            @id @default(autoincrement())
+  name              String
+  phone             String
+  whatsappPhone     String?
+  profileDetails    String?
+  gender            String         @default("UNKNOWN") // MALE, FEMALE, UNKNOWN
+  hasProvidedName   Boolean        @default(false)
+  isHiddenFromSales Boolean        @default(false)
+  isVip             Boolean        @default(false)
+  claimedAt         DateTime?
+  status            String // NEW, INTERESTED, AGREED, REJECTED, HESITANT, SPONSOR, NO_ANSWER, RECONTACT
+  source            String // CALL, SEND, POOL
+  notes             String?
+  recontactAttempts Int            @default(0)
+  nextRecontactAt   DateTime?
+  lastRecontactAt   DateTime?
+  batchId           Int?
+  batch             LeadBatch?     @relation(fields: [batchId], references: [id])
+  tenantId          Int
+  tenant            Tenant         @relation(fields: [tenantId], references: [id])
+  agentId           Int?
+  agent             User?          @relation(fields: [agentId], references: [id])
+  teamId            Int?
+  team              Team?          @relation(fields: [teamId], references: [id])
+  courseId          Int?
+  course            Course?        @relation(fields: [courseId], references: [id])
+  createdAt         DateTime       @default(now())
+  interactions      Interaction[]
+  followUpTasks     FollowUpTask[]
+  qaScorecards      QAScorecard[]
+  abTestEvents      ABTestEvent[]
 
   @@index([tenantId])
   @@index([teamId])
@@ -98,15 +107,17 @@ model Course {
 }
 
 model Interaction {
-  id      Int      @id @default(autoincrement())
-  leadId  Int
-  lead    Lead     @relation(fields: [leadId], references: [id])
-  userId  Int?
-  user    User?    @relation(fields: [userId], references: [id])
-  type    String   // CALL, SEND
-  outcome String?
-  notes   String?
-  date    DateTime @default(now())
+  id              Int           @id @default(autoincrement())
+  leadId          Int
+  lead            Lead          @relation(fields: [leadId], references: [id])
+  userId          Int?
+  user            User?         @relation(fields: [userId], references: [id])
+  type            String // CALL, SEND
+  outcome         String?
+  notes           String?
+  callDurationSec Int?
+  date            DateTime      @default(now())
+  qaScorecards    QAScorecard[]
 }
 
 model LeadBatch {
@@ -124,80 +135,254 @@ model LeadBatch {
 }
 
 model MessageTemplate {
-  id        Int    @id @default(autoincrement())
-  status    String // AGREED, REJECTED, HESITANT, SPONSOR
-  content   String
-  tenantId  Int
-  tenant    Tenant @relation(fields: [tenantId], references: [id])
+  id       Int    @id @default(autoincrement())
+  status   String // AGREED, REJECTED, HESITANT, SPONSOR
+  content  String
+  tenantId Int
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
 
   @@unique([tenantId, status])
   @@index([tenantId])
 }
 
 model EmployeeProfile {
-  id              Int      @id @default(autoincrement())
-  userId           Int      @unique
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  department       String   @default("Sales")
-  jobTitle         String?
-  phone            String?
-  timezone         String   @default("Africa/Cairo")
-  dailyCallTarget  Int      @default(30)
-  dailyApprovalTarget Int   @default(0)
-  dailyInterestedTarget Int @default(10)
-  simSerialNumber  String?
-  simPhoneNumber   String?
-  manualVipLimit   Int?     // If null, use automatic logic based on approvals. If set, use this limit.
-  isActive         Boolean  @default(true)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                    Int      @id @default(autoincrement())
+  userId                Int      @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department            String   @default("Sales")
+  jobTitle              String?
+  phone                 String?
+  timezone              String   @default("Africa/Cairo")
+  dailyCallTarget       Int      @default(30)
+  dailyApprovalTarget   Int      @default(0)
+  dailyInterestedTarget Int      @default(10)
+  simSerialNumber       String?
+  simPhoneNumber        String?
+  manualVipLimit        Int? // If null, use automatic logic based on approvals. If set, use this limit.
+  isActive              Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 }
 
 model Team {
-  id          Int      @id @default(autoincrement())
-  name        String
-  tenantId    Int
-  tenant      Tenant   @relation(fields: [tenantId], references: [id])
-  leadId      Int?     @unique
-  lead        User?    @relation("TeamLead", fields: [leadId], references: [id], onDelete: SetNull)
-  users       User[]
-  leads       Lead[]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        Int      @id @default(autoincrement())
+  name      String
+  tenantId  Int
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  leadId    Int?     @unique
+  lead      User?    @relation("TeamLead", fields: [leadId], references: [id], onDelete: SetNull)
+  users     User[]
+  leads     Lead[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([tenantId, name])
   @@index([tenantId])
 }
 
 model Tenant {
-  id               Int               @id @default(autoincrement())
-  name             String            @unique
-  slug             String            @unique
-  users            User[]
-  teams            Team[]
-  leads            Lead[]
-  leadBatches      LeadBatch[]
-  messageTemplates MessageTemplate[]
-  suggestions      Suggestion[]
-  faqs             FAQ[]
-  salesTips        SalesTip[]
-  releaseNotes     ReleaseNote[]
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  id                      Int                      @id @default(autoincrement())
+  name                    String                   @unique
+  slug                    String                   @unique
+  users                   User[]
+  teams                   Team[]
+  leads                   Lead[]
+  leadBatches             LeadBatch[]
+  messageTemplates        MessageTemplate[]
+  suggestions             Suggestion[]
+  faqs                    FAQ[]
+  salesTips               SalesTip[]
+  releaseNotes            ReleaseNote[]
+  followUpWorkflowSetting FollowUpWorkflowSetting?
+  followUpTasks           FollowUpTask[]
+  qaSamplingSetting       QASamplingSetting?
+  qaScorecards            QAScorecard[]
+  abTests                 ABTest[]
+  abTestEvents            ABTestEvent[]
+  gamificationSetting     GamificationSetting?
+  gamificationPointLogs   GamificationPointLog[]
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+}
+
+model QASamplingSetting {
+  id             Int      @id @default(autoincrement())
+  tenantId       Int      @unique
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  enabled        Boolean  @default(true)
+  samplingRate   Int      @default(20)
+  minDailySample Int      @default(5)
+  targetScore    Float    @default(85)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model QAScorecard {
+  id            Int          @id @default(autoincrement())
+  tenantId      Int
+  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  agentId       Int
+  agent         User         @relation("QAScorecardAgent", fields: [agentId], references: [id], onDelete: Cascade)
+  reviewerId    Int
+  reviewer      User         @relation("QAScorecardReviewer", fields: [reviewerId], references: [id], onDelete: Cascade)
+  leadId        Int?
+  lead          Lead?        @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  interactionId Int?
+  interaction   Interaction? @relation(fields: [interactionId], references: [id], onDelete: SetNull)
+  score         Float
+  maxScore      Float        @default(100)
+  rating        String       @default("PASS") // PASS, NEEDS_COACHING, FAIL
+  checklistJson String?
+  notes         String?
+  callDate      DateTime?
+  evaluatedAt   DateTime     @default(now())
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([tenantId, evaluatedAt])
+  @@index([agentId, evaluatedAt])
+  @@index([reviewerId, evaluatedAt])
+  @@index([interactionId])
+}
+
+model ABTest {
+  id          Int             @id @default(autoincrement())
+  tenantId    Int
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  channel     String // MESSAGE_TEMPLATE, CALL_SCRIPT
+  status      String          @default("DRAFT") // DRAFT, ACTIVE, PAUSED, COMPLETED
+  hypothesis  String?
+  startAt     DateTime?
+  endAt       DateTime?
+  createdById Int?
+  createdBy   User?           @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  variants    ABTestVariant[]
+  events      ABTestEvent[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([tenantId, status, channel])
+  @@index([tenantId, createdAt])
+}
+
+model ABTestVariant {
+  id        Int           @id @default(autoincrement())
+  testId    Int
+  test      ABTest        @relation(fields: [testId], references: [id], onDelete: Cascade)
+  key       String
+  label     String
+  content   String
+  isControl Boolean       @default(false)
+  events    ABTestEvent[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@unique([testId, key])
+  @@index([testId])
+}
+
+model ABTestEvent {
+  id           Int           @id @default(autoincrement())
+  tenantId     Int
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  testId       Int
+  test         ABTest        @relation(fields: [testId], references: [id], onDelete: Cascade)
+  variantId    Int
+  variant      ABTestVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  userId       Int?
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  leadId       Int?
+  lead         Lead?         @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  eventType    String // IMPRESSION, CONVERSION
+  metadataJson String?
+  createdAt    DateTime      @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([testId, variantId, eventType])
+  @@index([userId, createdAt])
+}
+
+model GamificationSetting {
+  id                  Int      @id @default(autoincrement())
+  tenantId            Int      @unique
+  tenant              Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  enabled             Boolean  @default(true)
+  pointsPerCall       Int      @default(1)
+  pointsPerInterested Int      @default(5)
+  pointsPerAgreed     Int      @default(12)
+  pointsPerQaPass     Int      @default(8)
+  dailyGoalPoints     Int      @default(30)
+  weeklyGoalPoints    Int      @default(150)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model GamificationPointLog {
+  id          Int      @id @default(autoincrement())
+  tenantId    Int
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceType  String // CALL, INTERESTED, AGREED, QA_PASS, MANUAL
+  referenceId Int?
+  points      Int
+  periodType  String // DAILY, WEEKLY
+  periodStart DateTime
+  periodEnd   DateTime
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, periodType, periodStart])
+  @@index([userId, periodType, periodStart])
+}
+
+model FollowUpWorkflowSetting {
+  id                   Int      @id @default(autoincrement())
+  tenantId             Int      @unique
+  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  noAnswerEnabled      Boolean  @default(true)
+  noAnswerDelayMinutes Int      @default(1440)
+  hesitantEnabled      Boolean  @default(true)
+  hesitantDelayMinutes Int      @default(720)
+  slaTargetMinutes     Int      @default(1440)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+model FollowUpTask {
+  id                Int       @id @default(autoincrement())
+  tenantId          Int
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId            Int
+  lead              Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  agentId           Int?
+  agent             User?     @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  triggerStatus     String // NO_ANSWER, HESITANT
+  status            String    @default("PENDING") // PENDING, COMPLETED, CANCELED
+  dueAt             DateTime
+  completedAt       DateTime?
+  completionOutcome String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([tenantId, status, dueAt])
+  @@index([leadId, status])
+  @@index([agentId, status])
 }
 
 model Suggestion {
-  id        Int      @id @default(autoincrement())
-  content   String
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id])
-  answer    String?
-  answeredAt DateTime?
+  id           Int       @id @default(autoincrement())
+  content      String
+  userId       Int
+  user         User      @relation(fields: [userId], references: [id])
+  answer       String?
+  answeredAt   DateTime?
   answeredById Int?
-  answeredBy User?   @relation("SuggestionAnsweredBy", fields: [answeredById], references: [id], onDelete: SetNull)
-  tenantId  Int
-  tenant    Tenant   @relation(fields: [tenantId], references: [id])
-  createdAt DateTime @default(now())
+  answeredBy   User?     @relation("SuggestionAnsweredBy", fields: [answeredById], references: [id], onDelete: SetNull)
+  tenantId     Int
+  tenant       Tenant    @relation(fields: [tenantId], references: [id])
+  createdAt    DateTime  @default(now())
 
   @@index([tenantId])
   @@index([userId])
@@ -249,22 +434,24 @@ model SalesTip {
 }
 
 model ReleaseNote {
-  id          Int      @id @default(autoincrement())
+  id          Int               @id @default(autoincrement())
   title       String
   body        String
   version     String?
-  isPublished Boolean  @default(true)
-  publishedAt DateTime @default(now())
+  isGlobal    Boolean           @default(false)
+  isPublished Boolean           @default(true)
+  publishedAt DateTime          @default(now())
   tenantId    Int
-  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  tenant      Tenant            @relation(fields: [tenantId], references: [id])
   createdById Int?
-  createdBy   User?    @relation("ReleaseNoteCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy   User?             @relation("ReleaseNoteCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   reads       ReleaseNoteRead[]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
 
   @@index([tenantId, publishedAt])
   @@index([tenantId, isPublished])
+  @@index([isGlobal, publishedAt])
 }
 
 model ReleaseNoteRead {

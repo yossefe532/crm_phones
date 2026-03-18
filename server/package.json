@@ -13,7 +13,9 @@
     "test": "node tests/team-isolation.verify.mjs",
     "test:tenant": "node tests/tenant-isolation.verify.mjs",
     "test:sim-parse": "node tests/sim-card-name-matcher.verify.mjs",
-    "test:status-transition-target": "node tests/status-transition-target.verify.mjs"
+    "test:status-transition-target": "node tests/status-transition-target.verify.mjs",
+    "test:followup-workflow": "node tests/followup-workflow.verify.mjs",
+    "test:qa-ab-gamification-release-notes": "node tests/qa-ab-gamification-release-notes.verify.mjs"
   },
   "prisma": {
     "seed": "node prisma/seed.js"

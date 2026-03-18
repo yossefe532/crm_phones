@@ -71,6 +71,13 @@ interface Stats {
     dailyInterestedTarget?: number;
     dailyApprovalTarget?: number;
   }>;
+  performance?: {
+    conversion?: number;
+    avgTalkTime?: number;
+    followupSLA?: number;
+    recontactSuccess?: number;
+    followupSlaTargetMinutes?: number;
+  };
 }
 
 interface Team {
@@ -261,6 +268,13 @@ export default function Dashboard() {
   const isTopThree = userRank >= 0 && userRank < 3;
   const displayLeaderboard = stats.leaderboard?.slice(0, 3) || [];
   const userStats = userRank >= 3 ? stats.leaderboard?.[userRank] : null;
+  const perf = stats.performance || {};
+  const formatSeconds = (value: number) => {
+    if (!Number.isFinite(value) || value <= 0) return '0:00';
+    const mins = Math.floor(value / 60);
+    const secs = value % 60;
+    return `${mins}:${String(secs).padStart(2, '0')}`;
+  };
 
   return (
     <div className="space-y-6 md:space-y-8 pb-10">
@@ -544,6 +558,34 @@ export default function Dashboard() {
           </div>
         );
       })()}
+
+      <div className="glass-card p-5 md:p-6 border-l-4 border-violet-500">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base md:text-lg font-black text-slate-800">لوحة الأداء المتقدم</h3>
+          <span className="text-[10px] md:text-xs font-black text-violet-600 bg-violet-100 px-2 py-1 rounded-full">لحظي</span>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="rounded-xl bg-violet-50 border border-violet-100 p-3">
+            <p className="text-[10px] text-slate-500 font-bold uppercase">Conversion</p>
+            <p className="text-xl font-black text-violet-700">{Math.round(perf.conversion || 0)}%</p>
+          </div>
+          <div className="rounded-xl bg-cyan-50 border border-cyan-100 p-3">
+            <p className="text-[10px] text-slate-500 font-bold uppercase">Avg Talk Time</p>
+            <p className="text-xl font-black text-cyan-700">{formatSeconds(perf.avgTalkTime || 0)}</p>
+          </div>
+          <div className="rounded-xl bg-amber-50 border border-amber-100 p-3">
+            <p className="text-[10px] text-slate-500 font-bold uppercase">Follow-up SLA</p>
+            <p className="text-xl font-black text-amber-700">{Math.round(perf.followupSLA || 0)}%</p>
+          </div>
+          <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-3">
+            <p className="text-[10px] text-slate-500 font-bold uppercase">Recontact Success</p>
+            <p className="text-xl font-black text-emerald-700">{Math.round(perf.recontactSuccess || 0)}%</p>
+          </div>
+        </div>
+        <p className="text-[11px] text-slate-500 mt-3 font-semibold">
+          هدف SLA الحالي: {Math.max(0, Math.round(perf.followupSlaTargetMinutes || 0))} دقيقة.
+        </p>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
         <div className="glass-card p-5 md:p-8 flex flex-col h-full bg-white/80 backdrop-blur-sm">

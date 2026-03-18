@@ -54,21 +54,43 @@ const POOL_SOURCE = 'POOL';
 const POOL_STATUS = 'NEW';
 const TARGET_PROGRESS_OUTCOMES = new Set(['INTERESTED', 'AGREED']);
 const TARGET_PROGRESS_INTERACTION_TYPES = ['CALL', 'SEND', 'STATUS'];
+const FOLLOW_UP_TRIGGER_STATUSES = new Set(['NO_ANSWER', 'HESITANT']);
+const FOLLOW_UP_SUCCESS_OUTCOMES = new Set(['INTERESTED', 'AGREED']);
 const UNKNOWN_LEAD_NAME = 'Unknown';
 const CLAIM_TIMEOUT_MINUTES = 15;
 const AUTO_NO_ANSWER_RECYCLE_HOURS = 24;
 const MAX_TEAM_LEADS_PER_TEAM = 2;
+const TEMPLATE_NOMINATION_INTRO = 'رقم حضرتك مترشح قصادي إنك تتقبل معانا في إيفينت مستر صلاح أبو المجد.';
 const DEFAULT_TEMPLATES = [
-  { status: 'INTERESTED', content: 'شكراً يا {customer_title} {customer_name} على اهتمامك. مع حضرتك {user_name}، وهبعت لك التفاصيل كاملة وخطوة المتابعة القادمة.' },
-  { status: 'AGREED', content: 'السلام عليكم {customer_title} {customer_name}، مع حضرتك {user_name} من إيديكون. تم تأكيد موافقتك، وبرجاء إرسال التفاصيل النهائية.' },
-  { status: 'REJECTED', content: 'شكراً لوقتك {customer_title} {customer_name}، نتمنى لك التوفيق.' },
-  { status: 'HESITANT', content: 'السلام عليكم {customer_title} {customer_name}، مع حضرتك {user_name}. حبيت أتابع مع حضرتك لو في أي استفسار.' },
-  { status: 'SPONSOR', content: 'السلام عليكم {customer_title} {customer_name}، شكراً لاهتمامك بالرعاية. برجاء إرسال التفاصيل المطلوبة.' },
-  { status: 'NO_ANSWER', content: 'السلام عليكم {customer_title} {customer_name}، حاولنا نتواصل مع حضرتك اليوم لكن ماكانش فيه رد. لو مناسب لحضرتك ابعتلنا وقت مناسب وهنكلمك فوراً.' },
-  { status: 'WRONG_NUMBER', content: 'نعتذر، تم تسجيل أن الرقم غير صحيح. برجاء التأكد من الرقم الصحيح إذا رغبت بالتواصل.' },
+  { status: 'INTERESTED', content: 'السلام عليكم {customer_title} {customer_name}، رقم حضرتك مترشح قصادي إنك تتقبل معانا في إيفينت مستر صلاح أبو المجد. مع حضرتك {user_name}، وهبعت لك التفاصيل كاملة وخطوة المتابعة القادمة.' },
+  { status: 'AGREED', content: 'السلام عليكم {customer_title} {customer_name}، رقم حضرتك مترشح قصادي إنك تتقبل معانا في إيفينت مستر صلاح أبو المجد. مع حضرتك {user_name} من إيديكون. تم تأكيد موافقتك، وبرجاء إرسال التفاصيل النهائية.' },
+  { status: 'REJECTED', content: 'السلام عليكم {customer_title} {customer_name}، رقم حضرتك مترشح قصادي إنك تتقبل معانا في إيفينت مستر صلاح أبو المجد. شكراً لوقتك ونتمنى لك التوفيق.' },
+  { status: 'HESITANT', content: 'السلام عليكم {customer_title} {customer_name}، رقم حضرتك مترشح قصادي إنك تتقبل معانا في إيفينت مستر صلاح أبو المجد. مع حضرتك {user_name}. حبيت أتابع مع حضرتك لو في أي استفسار.' },
+  { status: 'SPONSOR', content: 'السلام عليكم {customer_title} {customer_name}، رقم حضرتك مترشح قصادي إنك تتقبل معانا في إيفينت مستر صلاح أبو المجد. شكراً لاهتمامك بالرعاية. برجاء إرسال التفاصيل المطلوبة.' },
+  { status: 'NO_ANSWER', content: 'السلام عليكم {customer_title} {customer_name}، رقم حضرتك مترشح قصادي إنك تتقبل معانا في إيفينت مستر صلاح أبو المجد. حاولنا نتواصل مع حضرتك اليوم لكن ماكانش فيه رد. لو مناسب لحضرتك ابعتلنا وقت مناسب وهنكلمك فوراً.' },
+  { status: 'WRONG_NUMBER', content: 'السلام عليكم، رقم حضرتك مترشح قصادي إنك تتقبل معانا في إيفينت مستر صلاح أبو المجد. تم تسجيل أن الرقم غير صحيح. برجاء التأكد من الرقم الصحيح إذا رغبت بالتواصل.' },
 ];
 const FAQ_TYPES = new Set(['CALL_SUPPORT', 'SYSTEM_GUIDE']);
 const SALES_TIP_SOURCE_TYPES = new Set(['MANUAL', 'AI_GENERATED', 'WEB']);
+const QA_RATINGS = new Set(['PASS', 'NEEDS_COACHING', 'FAIL']);
+const AB_TEST_CHANNELS = new Set(['MESSAGE_TEMPLATE', 'CALL_SCRIPT']);
+const AB_TEST_STATUSES = new Set(['DRAFT', 'ACTIVE', 'PAUSED', 'COMPLETED']);
+const AB_TEST_EVENT_TYPES = new Set(['IMPRESSION', 'CONVERSION']);
+const GAMIFICATION_POINT_SOURCES = new Set(['CALL', 'INTERESTED', 'AGREED', 'QA_PASS', 'MANUAL']);
+const GAMIFICATION_PERIOD_TYPES = new Set(['DAILY', 'WEEKLY']);
+const GLOBAL_RELEASE_NOTE_VERSION = 'v2.0.0';
+const GLOBAL_RELEASE_NOTE_TITLE = 'تحديث ضخم: متابعة تلقائية + لوحة أداء متقدمة + QA و A/B و Gamification';
+const GLOBAL_RELEASE_NOTE_BODY = [
+  'تم إطلاق باقة تطويرات إنتاجية جديدة لفريق السالز:',
+  '',
+  '• Workflow Follow-up أوتوماتيك: لو الحالة (مردش/متردد) يتم إنشاء مهمة متابعة تلقائيًا بموعد ورسالة مناسبة.',
+  '• Performance Board لحظي متقدم: Conversion Rate + Average Talk Time + Follow-up SLA + Recontact Success.',
+  '• QA Sampling & Scorecards: تقييم عيّنات يومية بنقاط واضحة وملاحظات فردية.',
+  '• A/B Testing: تجربة نسختين للرسائل والسكربتات مع تقرير نتائج التحويل.',
+  '• Gamification احترافي: نقاط يومية/أسبوعية ولوحة متصدرين تحفيزية.',
+  '',
+  'الهدف من التحديث: رفع الإنتاجية وتقليل الهدر وتحسين جودة التواصل مع العملاء.',
+].join('\n');
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '';
 const allowedOrigins = CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean);
 const ASSISTANT_TRAINING_FILE = join(__dirname, 'assistant-training.json');
@@ -267,6 +289,236 @@ const parseDateTime = (value) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
+const parseCallDurationSec = (value) => {
+  if (typeof value === 'undefined' || value === null || value === '') return null;
+  const parsed = parseInteger(value);
+  if (parsed === null || parsed < 0 || parsed > 4 * 60 * 60) return null;
+  return parsed;
+};
+
+const ensureFollowUpWorkflowSetting = async (tenantId, tx = prisma) => tx.followUpWorkflowSetting.upsert({
+  where: { tenantId },
+  update: {},
+  create: {
+    tenantId,
+    noAnswerEnabled: true,
+    noAnswerDelayMinutes: 24 * 60,
+    hesitantEnabled: true,
+    hesitantDelayMinutes: 12 * 60,
+    slaTargetMinutes: 24 * 60,
+  },
+});
+
+const ensureQASamplingSetting = async (tenantId, tx = prisma) => tx.qASamplingSetting.upsert({
+  where: { tenantId },
+  update: {},
+  create: {
+    tenantId,
+    enabled: true,
+    samplingRate: 20,
+    minDailySample: 5,
+    targetScore: 85,
+  },
+});
+
+const ensureGamificationSetting = async (tenantId, tx = prisma) => tx.gamificationSetting.upsert({
+  where: { tenantId },
+  update: {},
+  create: {
+    tenantId,
+    enabled: true,
+    pointsPerCall: 1,
+    pointsPerInterested: 5,
+    pointsPerAgreed: 12,
+    pointsPerQaPass: 8,
+    dailyGoalPoints: 30,
+    weeklyGoalPoints: 150,
+  },
+});
+
+const normalizeQARating = (value, fallback = 'PASS') => {
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim().toUpperCase();
+  return QA_RATINGS.has(normalized) ? normalized : fallback;
+};
+
+const normalizeABChannel = (value, fallback = null) => {
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim().toUpperCase();
+  return AB_TEST_CHANNELS.has(normalized) ? normalized : fallback;
+};
+
+const normalizeABStatus = (value, fallback = null) => {
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim().toUpperCase();
+  return AB_TEST_STATUSES.has(normalized) ? normalized : fallback;
+};
+
+const normalizeABEventType = (value, fallback = null) => {
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim().toUpperCase();
+  return AB_TEST_EVENT_TYPES.has(normalized) ? normalized : fallback;
+};
+
+const normalizeGamificationPointSource = (value, fallback = null) => {
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim().toUpperCase();
+  return GAMIFICATION_POINT_SOURCES.has(normalized) ? normalized : fallback;
+};
+
+const normalizeGamificationPeriodType = (value, fallback = 'DAILY') => {
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim().toUpperCase();
+  return GAMIFICATION_PERIOD_TYPES.has(normalized) ? normalized : fallback;
+};
+
+const normalizeJsonText = (value, maxLength = 20000) => {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    return trimmed.slice(0, maxLength);
+  }
+  if (value && typeof value === 'object') {
+    try {
+      return JSON.stringify(value).slice(0, maxLength);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
+
+const buildPeriodBounds = (periodType = 'DAILY', anchor = new Date()) => {
+  const base = new Date(anchor);
+  if (Number.isNaN(base.getTime())) {
+    const { start, end } = buildDayRange();
+    return { start, end };
+  }
+  if (periodType === 'WEEKLY') {
+    const start = new Date(base);
+    start.setHours(0, 0, 0, 0);
+    const day = start.getDay();
+    const diff = day === 0 ? -6 : 1 - day; // Monday start
+    start.setDate(start.getDate() + diff);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 7);
+    return { start, end };
+  }
+  const start = new Date(base);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start, end };
+};
+
+const createGamificationPointEntries = async ({
+  tx = prisma,
+  tenantId,
+  userId,
+  sourceType,
+  referenceId = null,
+  points = 0,
+  notes = null,
+  occurredAt = new Date(),
+}) => {
+  if (!tenantId || !userId || !Number.isFinite(points) || points === 0) return [];
+  const source = normalizeGamificationPointSource(sourceType, null);
+  if (!source) return [];
+  const rows = [];
+  for (const periodType of ['DAILY', 'WEEKLY']) {
+    const { start, end } = buildPeriodBounds(periodType, occurredAt);
+    rows.push({
+      tenantId,
+      userId,
+      sourceType: source,
+      referenceId,
+      points: Math.trunc(points),
+      periodType,
+      periodStart: start,
+      periodEnd: end,
+      notes: normalizeNullableString(notes, 500),
+    });
+  }
+  const created = [];
+  for (const row of rows) {
+    const item = await tx.gamificationPointLog.create({ data: row });
+    created.push(item);
+  }
+  return created;
+};
+
+const resolveFollowUpDueAt = ({ status, setting, now = new Date() }) => {
+  if (status === 'NO_ANSWER' && setting.noAnswerEnabled) {
+    return new Date(now.getTime() + (setting.noAnswerDelayMinutes * 60 * 1000));
+  }
+  if (status === 'HESITANT' && setting.hesitantEnabled) {
+    return new Date(now.getTime() + (setting.hesitantDelayMinutes * 60 * 1000));
+  }
+  return null;
+};
+
+const syncAutomaticFollowUpTask = async ({ tx, leadBefore = null, leadAfter, now = new Date() }) => {
+  if (!leadAfter?.tenantId || !leadAfter?.id) return;
+  const setting = await ensureFollowUpWorkflowSetting(leadAfter.tenantId, tx);
+  const nextTriggerStatus = FOLLOW_UP_TRIGGER_STATUSES.has(leadAfter.status) ? leadAfter.status : null;
+  const dueAt = nextTriggerStatus
+    ? resolveFollowUpDueAt({ status: nextTriggerStatus, setting, now })
+    : null;
+  const pendingTask = await tx.followUpTask.findFirst({
+    where: { leadId: leadAfter.id, status: 'PENDING' },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (nextTriggerStatus && dueAt) {
+    if (pendingTask && pendingTask.triggerStatus === nextTriggerStatus) {
+      await tx.followUpTask.update({
+        where: { id: pendingTask.id },
+        data: {
+          dueAt,
+          agentId: leadAfter.agentId || null,
+        },
+      });
+      return;
+    }
+
+    if (pendingTask) {
+      await tx.followUpTask.update({
+        where: { id: pendingTask.id },
+        data: {
+          status: 'COMPLETED',
+          completedAt: now,
+          completionOutcome: nextTriggerStatus,
+        },
+      });
+    }
+
+    await tx.followUpTask.create({
+      data: {
+        tenantId: leadAfter.tenantId,
+        leadId: leadAfter.id,
+        agentId: leadAfter.agentId || null,
+        triggerStatus: nextTriggerStatus,
+        status: 'PENDING',
+        dueAt,
+      },
+    });
+    return;
+  }
+
+  if (pendingTask) {
+    const hasStatusChanged = !leadBefore || leadBefore.status !== leadAfter.status;
+    const completionOutcome = hasStatusChanged ? leadAfter.status : pendingTask.completionOutcome;
+    await tx.followUpTask.update({
+      where: { id: pendingTask.id },
+      data: {
+        status: 'COMPLETED',
+        completedAt: pendingTask.completedAt || now,
+        completionOutcome: completionOutcome || null,
+      },
+    });
+  }
+};
+
 const autoRecycleNoAnswerLeadsToPool = async ({ now = new Date() } = {}) => {
   const cutoff = new Date(now.getTime() - (AUTO_NO_ANSWER_RECYCLE_HOURS * 60 * 60 * 1000));
   const affected = await prisma.lead.findMany({
@@ -370,6 +622,13 @@ const normalizeNullableString = (value, maxLength = 120) => {
   const trimmed = value.trim();
   if (!trimmed) return null;
   return trimmed.slice(0, maxLength);
+};
+
+const ensureTemplateNominationIntro = (content) => {
+  const normalized = normalizeNullableString(content, 2000);
+  if (!normalized) return TEMPLATE_NOMINATION_INTRO;
+  if (normalized.includes(TEMPLATE_NOMINATION_INTRO)) return normalized;
+  return `${TEMPLATE_NOMINATION_INTRO} ${normalized}`.trim();
 };
 
 const normalizeFaqType = (value, fallback = null) => {
@@ -979,11 +1238,49 @@ const assertTeamLeadCapacity = async (teamId, { excludeUserId } = {}) => {
   return null;
 };
 
+const ensureGlobalProductivityReleaseNote = async () => {
+  const tenants = await prisma.tenant.findMany({ select: { id: true } });
+  for (const tenant of tenants) {
+    const existing = await prisma.releaseNote.findFirst({
+      where: {
+        tenantId: tenant.id,
+        title: GLOBAL_RELEASE_NOTE_TITLE,
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      await prisma.releaseNote.update({
+        where: { id: existing.id },
+        data: {
+          version: GLOBAL_RELEASE_NOTE_VERSION,
+          body: GLOBAL_RELEASE_NOTE_BODY,
+          isPublished: true,
+          publishedAt: new Date(),
+          isGlobal: false,
+        },
+      });
+      continue;
+    }
+    await prisma.releaseNote.create({
+      data: {
+        tenantId: tenant.id,
+        title: GLOBAL_RELEASE_NOTE_TITLE,
+        version: GLOBAL_RELEASE_NOTE_VERSION,
+        body: GLOBAL_RELEASE_NOTE_BODY,
+        isPublished: true,
+        isGlobal: false,
+        publishedAt: new Date(),
+      },
+    });
+  }
+};
+
 async function startServer() {
   console.log('Connecting to database...');
   try {
     await prisma.$connect();
     console.log('Database connected successfully');
+    await ensureGlobalProductivityReleaseNote();
   } catch (e) {
     console.error('Database connection failed:', e);
     process.exit(1);
@@ -3107,7 +3404,7 @@ async function startServer() {
       return res.status(400).json({ error: 'Invalid lead id' });
     }
 
-    const { name, status, source, notes, courseId, gender, whatsappPhone, profileDetails } = req.body;
+    const { name, status, source, notes, courseId, gender, whatsappPhone, profileDetails, callDurationSec } = req.body;
     if (typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({ error: 'Name is required' });
     }
@@ -3127,6 +3424,10 @@ async function startServer() {
       return res.status(400).json({ error: 'Invalid whatsappPhone value' });
     }
     const normalizedProfileDetails = normalizeNullableString(profileDetails, 2000);
+    const normalizedCallDurationSec = parseCallDurationSec(callDurationSec);
+    if (typeof callDurationSec !== 'undefined' && normalizedCallDurationSec === null) {
+      return res.status(400).json({ error: 'Invalid callDurationSec value' });
+    }
 
     const actor = await getCurrentUserScope(req.user.id);
     if (!actor) {
@@ -3159,7 +3460,7 @@ async function startServer() {
 
       const finalizedLead = await prisma.$transaction(async (tx) => {
         if (status === POOL_STATUS) {
-          return tx.lead.update({
+          const pooledLead = await tx.lead.update({
             where: { id: leadId },
             data: {
               name: name.trim(),
@@ -3176,6 +3477,8 @@ async function startServer() {
               isHiddenFromSales: false,
             },
           });
+          await syncAutomaticFollowUpTask({ tx, leadBefore: existingLead, leadAfter: pooledLead });
+          return pooledLead;
         }
 
         const updatedLead = await tx.lead.update({
@@ -3202,8 +3505,10 @@ async function startServer() {
             type: source === 'SEND' ? 'SEND' : 'CALL',
             outcome: status || null,
             notes: notes || null,
+            callDurationSec: source === 'CALL' ? normalizedCallDurationSec : null,
           },
         });
+        await syncAutomaticFollowUpTask({ tx, leadBefore: existingLead, leadAfter: updatedLead });
         checkTargetCompletion(req.user.id).catch(() => {});
         maybeSendLowApprovalAlert(req.user.id).catch(() => {});
         broadcastTenantEvent(req.user?.tenantId, 'invalidate', {
@@ -3381,6 +3686,138 @@ async function startServer() {
     }
   });
 
+  // GET /api/workflows/follow-up (Tenant follow-up workflow settings)
+  app.get('/api/workflows/follow-up', authenticateToken, async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const setting = await ensureFollowUpWorkflowSetting(actor.tenantId);
+      return res.json(setting);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch follow-up workflow settings' });
+    }
+  });
+
+  // PUT /api/workflows/follow-up (Admin/Team Lead updates follow-up workflow settings)
+  app.put('/api/workflows/follow-up', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const parseMinutes = (value) => {
+      if (typeof value === 'undefined') return undefined;
+      const parsed = parseInteger(value);
+      if (parsed === null || parsed < 5 || parsed > 7 * 24 * 60) return null;
+      return parsed;
+    };
+
+    const noAnswerEnabled = typeof req.body?.noAnswerEnabled === 'boolean' ? req.body.noAnswerEnabled : undefined;
+    const hesitantEnabled = typeof req.body?.hesitantEnabled === 'boolean' ? req.body.hesitantEnabled : undefined;
+    const noAnswerDelayMinutes = parseMinutes(req.body?.noAnswerDelayMinutes);
+    const hesitantDelayMinutes = parseMinutes(req.body?.hesitantDelayMinutes);
+    const slaTargetMinutes = parseMinutes(req.body?.slaTargetMinutes);
+
+    if (
+      (typeof req.body?.noAnswerDelayMinutes !== 'undefined' && noAnswerDelayMinutes === null)
+      || (typeof req.body?.hesitantDelayMinutes !== 'undefined' && hesitantDelayMinutes === null)
+      || (typeof req.body?.slaTargetMinutes !== 'undefined' && slaTargetMinutes === null)
+    ) {
+      return res.status(400).json({ error: 'Delay/SLA values must be between 5 and 10080 minutes' });
+    }
+
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const updated = await prisma.followUpWorkflowSetting.upsert({
+        where: { tenantId: actor.tenantId },
+        update: {
+          ...(typeof noAnswerEnabled === 'boolean' ? { noAnswerEnabled } : {}),
+          ...(typeof hesitantEnabled === 'boolean' ? { hesitantEnabled } : {}),
+          ...(typeof noAnswerDelayMinutes === 'number' ? { noAnswerDelayMinutes } : {}),
+          ...(typeof hesitantDelayMinutes === 'number' ? { hesitantDelayMinutes } : {}),
+          ...(typeof slaTargetMinutes === 'number' ? { slaTargetMinutes } : {}),
+        },
+        create: {
+          tenantId: actor.tenantId,
+          noAnswerEnabled: typeof noAnswerEnabled === 'boolean' ? noAnswerEnabled : true,
+          hesitantEnabled: typeof hesitantEnabled === 'boolean' ? hesitantEnabled : true,
+          noAnswerDelayMinutes: typeof noAnswerDelayMinutes === 'number' ? noAnswerDelayMinutes : 24 * 60,
+          hesitantDelayMinutes: typeof hesitantDelayMinutes === 'number' ? hesitantDelayMinutes : 12 * 60,
+          slaTargetMinutes: typeof slaTargetMinutes === 'number' ? slaTargetMinutes : 24 * 60,
+        },
+      });
+
+      return res.json(updated);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to update follow-up workflow settings' });
+    }
+  });
+
+  // GET /api/leads/followups (Automatic follow-up queue for NO_ANSWER + HESITANT)
+  app.get('/api/leads/followups', authenticateToken, async (req, res) => {
+    const dueOnly = String(normalizeSingleQueryValue(req.query.dueOnly) || '0') === '1';
+    const reason = typeof normalizeSingleQueryValue(req.query.reason) === 'string'
+      ? String(normalizeSingleQueryValue(req.query.reason)).trim().toUpperCase()
+      : null;
+    if (reason && !FOLLOW_UP_TRIGGER_STATUSES.has(reason)) {
+      return res.status(400).json({ error: 'Invalid reason filter' });
+    }
+
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const where = {
+        tenantId: actor.tenantId,
+        status: 'PENDING',
+        ...(reason ? { triggerStatus: reason } : {}),
+        ...(dueOnly ? { dueAt: { lte: new Date() } } : {}),
+      };
+
+      if (actor.role === 'TEAM_LEAD') {
+        where.lead = { teamId: actor.teamId || -1 };
+      } else if (actor.role === 'SALES') {
+        where.agentId = req.user.id;
+      } else {
+        const teamIdFilter = parseInteger(normalizeSingleQueryValue(req.query.teamId));
+        if (teamIdFilter) {
+          where.lead = { teamId: teamIdFilter };
+        }
+      }
+
+      const tasks = await prisma.followUpTask.findMany({
+        where,
+        include: {
+          lead: {
+            select: {
+              id: true,
+              name: true,
+              phone: true,
+              whatsappPhone: true,
+              status: true,
+              notes: true,
+              teamId: true,
+              agentId: true,
+            },
+          },
+          agent: { select: { id: true, name: true, email: true } },
+        },
+        orderBy: [{ dueAt: 'asc' }, { createdAt: 'desc' }],
+      });
+
+      return res.json(tasks);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch automatic follow-up queue' });
+    }
+  });
+
   // POST /api/leads/:id/recontact/schedule (Move no-answer lead to recontact queue)
   app.post('/api/leads/:id/recontact/schedule', authenticateToken, async (req, res) => {
     const leadId = parseInteger(req.params.id);
@@ -3410,13 +3847,17 @@ async function startServer() {
         return res.status(409).json({ error: 'Only NO_ANSWER/RECONTACT leads can be scheduled for recontact' });
       }
 
-      const updatedLead = await prisma.lead.update({
-        where: { id: leadId },
-        data: {
-          status: 'RECONTACT',
-          nextRecontactAt: nextContactAt,
-          notes: notes || existingLead.notes,
-        },
+      const updatedLead = await prisma.$transaction(async (tx) => {
+        const lead = await tx.lead.update({
+          where: { id: leadId },
+          data: {
+            status: 'RECONTACT',
+            nextRecontactAt: nextContactAt,
+            notes: notes || existingLead.notes,
+          },
+        });
+        await syncAutomaticFollowUpTask({ tx, leadBefore: existingLead, leadAfter: lead });
+        return lead;
       });
       return res.json(updatedLead);
     } catch (error) {
@@ -3431,6 +3872,7 @@ async function startServer() {
     const outcome = typeof req.body?.outcome === 'string' ? req.body.outcome.trim().toUpperCase() : '';
     const source = typeof req.body?.source === 'string' ? req.body.source.trim().toUpperCase() : 'CALL';
     const notes = normalizeNullableString(req.body?.notes, 1000);
+    const normalizedCallDurationSec = parseCallDurationSec(req.body?.callDurationSec);
     const scheduleNextAt = parseDateTime(req.body?.scheduleNextAt);
 
     if (leadId === null) {
@@ -3444,6 +3886,9 @@ async function startServer() {
     }
     if (outcome === 'NO_ANSWER' && !scheduleNextAt) {
       return res.status(400).json({ error: 'scheduleNextAt is required when outcome is NO_ANSWER' });
+    }
+    if (typeof req.body?.callDurationSec !== 'undefined' && normalizedCallDurationSec === null) {
+      return res.status(400).json({ error: 'Invalid callDurationSec value' });
     }
 
     try {
@@ -3482,8 +3927,10 @@ async function startServer() {
             type: source === 'SEND' ? 'SEND' : 'CALL',
             outcome,
             notes: notes || null,
+            callDurationSec: source === 'CALL' ? normalizedCallDurationSec : null,
           },
         });
+        await syncAutomaticFollowUpTask({ tx, leadBefore: existingLead, leadAfter: lead, now });
         checkTargetCompletion(req.user.id).catch(() => {});
         maybeSendLowApprovalAlert(req.user.id).catch(() => {});
         broadcastTenantEvent(req.user?.tenantId, 'invalidate', {
@@ -3629,7 +4076,7 @@ async function startServer() {
 
   // POST /api/leads (Manually add lead)
   app.post('/api/leads', authenticateToken, async (req, res) => {
-    const { name, phone, status, source, notes, courseId, gender, whatsappPhone, teamId: rawTeamId, profileDetails } = req.body;
+    const { name, phone, status, source, notes, courseId, gender, whatsappPhone, teamId: rawTeamId, profileDetails, callDurationSec } = req.body;
     if (status && !LEAD_STATUSES.has(status)) {
       return res.status(400).json({ error: 'Invalid status value' });
     }
@@ -3645,6 +4092,10 @@ async function startServer() {
       return res.status(400).json({ error: 'Invalid whatsappPhone value' });
     }
     const normalizedProfileDetails = normalizeNullableString(profileDetails, 2000);
+    const normalizedCallDurationSec = parseCallDurationSec(callDurationSec);
+    if (typeof callDurationSec !== 'undefined' && normalizedCallDurationSec === null) {
+      return res.status(400).json({ error: 'Invalid callDurationSec value' });
+    }
     const normalizedPhone = normalizeEgyptMobile(phone);
     if (!normalizedPhone) {
       return res.status(400).json({ error: 'Invalid phone value' });
@@ -3729,6 +4180,7 @@ async function startServer() {
               type: effectiveSource === 'SEND' ? 'SEND' : 'CALL',
               outcome: createdLead.status || null,
               notes: createdLead.notes || null,
+              callDurationSec: effectiveSource === 'CALL' ? normalizedCallDurationSec : null,
             },
           });
           checkTargetCompletion(req.user.id).catch(() => {});
@@ -3739,6 +4191,7 @@ async function startServer() {
             userId: req.user?.id,
           });
         }
+        await syncAutomaticFollowUpTask({ tx, leadBefore: null, leadAfter: createdLead });
 
         return createdLead;
       });
@@ -3753,7 +4206,7 @@ async function startServer() {
   // PUT /api/leads/:id (Update lead status/notes)
   app.put('/api/leads/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
-    const { name, status, notes, logCall, gender, whatsappPhone, profileDetails } = req.body;
+    const { name, status, notes, logCall, gender, whatsappPhone, profileDetails, callDurationSec } = req.body;
     const leadId = parseInt(id);
     if (Number.isNaN(leadId)) {
       return res.status(400).json({ error: 'Invalid lead id' });
@@ -3781,6 +4234,10 @@ async function startServer() {
     }
     const hasProfileDetails = Object.prototype.hasOwnProperty.call(req.body, 'profileDetails');
     const normalizedProfileDetails = hasProfileDetails ? normalizeNullableString(profileDetails, 2000) : null;
+    const normalizedCallDurationSec = parseCallDurationSec(callDurationSec);
+    if (typeof callDurationSec !== 'undefined' && normalizedCallDurationSec === null) {
+      return res.status(400).json({ error: 'Invalid callDurationSec value' });
+    }
 
     try {
       const actor = await getCurrentUserScope(req.user.id);
@@ -3845,10 +4302,13 @@ async function startServer() {
               type: 'CALL',
               outcome: status || null,
               notes: notes || null,
+              callDurationSec: normalizedCallDurationSec,
             },
           });
           hasInteractionMutation = true;
         }
+
+        await syncAutomaticFollowUpTask({ tx, leadBefore: existingLead, leadAfter: updatedLead });
 
         if (hasInteractionMutation) {
           checkTargetCompletion(req.user.id).catch(() => {});
@@ -4217,6 +4677,53 @@ async function startServer() {
           : 0;
         poolCount = await prisma.lead.count({ where: buildPoolWhere({ teamId: actor.teamId, tenantId: actor.tenantId }) });
       }
+
+      const interactionScopeWhere = {
+        lead: {
+          tenantId: actor.tenantId,
+          source: { not: POOL_SOURCE },
+          ...(actor.role === 'ADMIN' && teamIdFilter ? { teamId: teamIdFilter } : {}),
+          ...(actor.role === 'TEAM_LEAD' ? { teamId: actor.teamId || -1 } : {}),
+        },
+        ...(actor.role === 'SALES' ? { userId: req.user.id } : {}),
+      };
+      const avgTalkAgg = await prisma.interaction.aggregate({
+        where: {
+          ...interactionScopeWhere,
+          type: 'CALL',
+          callDurationSec: { not: null },
+          date: { gte: start, lt: end },
+        },
+        _avg: { callDurationSec: true },
+      });
+      const avgTalkTime = avgTalkAgg?._avg?.callDurationSec
+        ? Number(avgTalkAgg._avg.callDurationSec.toFixed(2))
+        : 0;
+
+      const followUpScopeWhere = {
+        tenantId: actor.tenantId,
+        ...(actor.role === 'ADMIN' && teamIdFilter ? { lead: { teamId: teamIdFilter } } : {}),
+        ...(actor.role === 'TEAM_LEAD' ? { lead: { teamId: actor.teamId || -1 } } : {}),
+        ...(actor.role === 'SALES' ? { agentId: req.user.id } : {}),
+      };
+      const [setting, completedFollowUps] = await Promise.all([
+        ensureFollowUpWorkflowSetting(actor.tenantId),
+        prisma.followUpTask.findMany({
+          where: {
+            ...followUpScopeWhere,
+            status: 'COMPLETED',
+            completedAt: { not: null },
+          },
+          select: { dueAt: true, completedAt: true, completionOutcome: true },
+        }),
+      ]);
+      const totalCompletedFollowUps = completedFollowUps.length;
+      const onTimeFollowUps = completedFollowUps.filter((item) => {
+        if (!item.completedAt || !item.dueAt) return false;
+        return item.completedAt.getTime() <= item.dueAt.getTime();
+      }).length;
+      const successfulFollowUps = completedFollowUps.filter((item) => FOLLOW_UP_SUCCESS_OUTCOMES.has(item.completionOutcome || '')).length;
+
       const safeTotal = safeCount(total);
       const safeInterested = safeCount(interested);
       const safeAgreed = safeCount(agreed);
@@ -4245,6 +4752,13 @@ async function startServer() {
         ? Math.min(100, Number(((safeInterestedToday / safeDailyInterestedTarget) * 100).toFixed(2)))
         : 100;
       const completionRate = callsCompletionRate === null ? null : Math.min(callsCompletionRate, approvalsCompletionRate, interestedCompletionRate);
+      const conversion = safeTotal > 0 ? Number(((safeAgreed / safeTotal) * 100).toFixed(2)) : 0;
+      const followupSLA = totalCompletedFollowUps > 0
+        ? Number(((onTimeFollowUps / totalCompletedFollowUps) * 100).toFixed(2))
+        : 100;
+      const recontactSuccess = totalCompletedFollowUps > 0
+        ? Number(((successfulFollowUps / totalCompletedFollowUps) * 100).toFixed(2))
+        : 0;
 
       res.json({
         total: safeTotal,
@@ -4291,6 +4805,17 @@ async function startServer() {
           interestedCompletionRate,
           approvalsCompletionRate,
           completionRate,
+          conversion,
+          avgTalkTime,
+          followupSLA,
+          recontactSuccess,
+        },
+        performance: {
+          conversion,
+          avgTalkTime,
+          followupSLA,
+          recontactSuccess,
+          followupSlaTargetMinutes: setting.slaTargetMinutes,
         },
         teamMembersPerformance: (actor.role === 'ADMIN' || actor.role === 'TEAM_LEAD') ? teamMembersPerformance : [],
         teamAnalytics: actor.role === 'TEAM_LEAD'
@@ -4854,7 +5379,7 @@ async function startServer() {
           type: { in: ['CALL', 'SEND'] },
           date: { gte: start, lte: end },
         },
-        select: { date: true, outcome: true, lead: { select: { batchId: true } } },
+        select: { date: true, outcome: true, callDurationSec: true, lead: { select: { batchId: true } } },
       });
       const seriesMap = new Map();
       for (let i = 0; i < days; i++) {
@@ -4878,6 +5403,33 @@ async function startServer() {
       const totalCalls = series.reduce((sum, row) => sum + row.calls, 0);
       const totalInterested = series.reduce((sum, row) => sum + row.interested, 0);
       const totalAgreed = series.reduce((sum, row) => sum + row.agreed, 0);
+      const talkDurations = interactions
+        .filter((item) => typeof item.callDurationSec === 'number' && item.callDurationSec >= 0)
+        .map((item) => item.callDurationSec);
+      const avgTalkTime = talkDurations.length
+        ? Number((talkDurations.reduce((sum, value) => sum + value, 0) / talkDurations.length).toFixed(2))
+        : 0;
+      const conversion = totalCalls > 0 ? Number(((totalAgreed / totalCalls) * 100).toFixed(2)) : 0;
+      const [setting, completedFollowUps] = await Promise.all([
+        ensureFollowUpWorkflowSetting(actor.tenantId),
+        prisma.followUpTask.findMany({
+          where: {
+            tenantId: actor.tenantId,
+            agentId: employee.id,
+            status: 'COMPLETED',
+            completedAt: { gte: start, lte: end },
+          },
+          select: { dueAt: true, completedAt: true, completionOutcome: true },
+        }),
+      ]);
+      const onTimeFollowUps = completedFollowUps.filter((item) => item.completedAt && item.completedAt <= item.dueAt).length;
+      const successFollowUps = completedFollowUps.filter((item) => FOLLOW_UP_SUCCESS_OUTCOMES.has(item.completionOutcome || '')).length;
+      const followupSLA = completedFollowUps.length
+        ? Number(((onTimeFollowUps / completedFollowUps.length) * 100).toFixed(2))
+        : 100;
+      const recontactSuccess = completedFollowUps.length
+        ? Number(((successFollowUps / completedFollowUps.length) * 100).toFixed(2))
+        : 0;
       const callTarget = employee.employeeProfile?.dailyCallTarget || 0;
       const interestedTarget = employee.employeeProfile?.dailyInterestedTarget || 0;
       const approvalTarget = employee.employeeProfile?.dailyApprovalTarget || 0;
@@ -4915,6 +5467,17 @@ async function startServer() {
           interestedCompletionRate,
           approvalsCompletionRate,
           completionRate,
+          conversion,
+          avgTalkTime,
+          followupSLA,
+          recontactSuccess,
+        },
+        performance: {
+          conversion,
+          avgTalkTime,
+          followupSLA,
+          recontactSuccess,
+          followupSlaTargetMinutes: setting.slaTargetMinutes,
         },
         series,
       });
@@ -5556,7 +6119,715 @@ async function startServer() {
     }
   });
 
+  // --- QA Sampling + Scorecards ---
+
+  app.get('/api/qa/sampling-settings', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+      const setting = await ensureQASamplingSetting(actor.tenantId);
+      return res.json(setting);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch QA sampling settings' });
+    }
+  });
+
+  app.put('/api/qa/sampling-settings', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const payload = {};
+      if (Object.prototype.hasOwnProperty.call(req.body, 'enabled')) {
+        if (typeof req.body.enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be boolean' });
+        payload.enabled = req.body.enabled;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'samplingRate')) {
+        const value = parseInteger(req.body?.samplingRate);
+        if (value === null || value < 1 || value > 100) return res.status(400).json({ error: 'samplingRate must be between 1 and 100' });
+        payload.samplingRate = value;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'minDailySample')) {
+        const value = parseInteger(req.body?.minDailySample);
+        if (value === null || value < 0 || value > 500) return res.status(400).json({ error: 'minDailySample must be between 0 and 500' });
+        payload.minDailySample = value;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'targetScore')) {
+        const value = Number(req.body?.targetScore);
+        if (!Number.isFinite(value) || value < 0 || value > 100) return res.status(400).json({ error: 'targetScore must be between 0 and 100' });
+        payload.targetScore = value;
+      }
+
+      const updated = await prisma.qASamplingSetting.upsert({
+        where: { tenantId: actor.tenantId },
+        update: payload,
+        create: {
+          tenantId: actor.tenantId,
+          enabled: payload.enabled ?? true,
+          samplingRate: payload.samplingRate ?? 20,
+          minDailySample: payload.minDailySample ?? 5,
+          targetScore: payload.targetScore ?? 85,
+        },
+      });
+      return res.json(updated);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to update QA sampling settings' });
+    }
+  });
+
+  app.get('/api/qa/scorecards', authenticateToken, async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const requestedAgentId = parseInteger(normalizeSingleQueryValue(req.query.agentId));
+      const reviewerId = parseInteger(normalizeSingleQueryValue(req.query.reviewerId));
+      const from = parseDateTime(normalizeSingleQueryValue(req.query.from));
+      const to = parseDateTime(normalizeSingleQueryValue(req.query.to));
+      const limit = Math.min(200, Math.max(1, parseInteger(normalizeSingleQueryValue(req.query.limit)) || 50));
+
+      const where = {
+        tenantId: actor.tenantId,
+        ...(requestedAgentId && requestedAgentId > 0 ? { agentId: requestedAgentId } : {}),
+        ...(reviewerId && reviewerId > 0 ? { reviewerId } : {}),
+        ...(from || to ? { evaluatedAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}),
+      };
+      if (actor.role === 'SALES') {
+        where.agentId = actor.id;
+      }
+
+      const rows = await prisma.qAScorecard.findMany({
+        where,
+        include: {
+          agent: { select: { id: true, name: true, email: true } },
+          reviewer: { select: { id: true, name: true, email: true } },
+          lead: { select: { id: true, name: true, phone: true } },
+          interaction: { select: { id: true, type: true, outcome: true, date: true } },
+        },
+        orderBy: [{ evaluatedAt: 'desc' }, { id: 'desc' }],
+        take: limit,
+      });
+      return res.json(rows);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch QA scorecards' });
+    }
+  });
+
+  app.get('/api/qa/scorecards/summary', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+      const from = parseDateTime(normalizeSingleQueryValue(req.query.from));
+      const to = parseDateTime(normalizeSingleQueryValue(req.query.to));
+
+      const rows = await prisma.qAScorecard.findMany({
+        where: {
+          tenantId: actor.tenantId,
+          ...(from || to ? { evaluatedAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}),
+        },
+        select: {
+          id: true,
+          score: true,
+          maxScore: true,
+          rating: true,
+          agentId: true,
+          agent: { select: { id: true, name: true, email: true } },
+        },
+      });
+      const byAgent = new Map();
+      for (const item of rows) {
+        const current = byAgent.get(item.agentId) || {
+          agent: item.agent,
+          scorecards: 0,
+          totalScore: 0,
+          totalMaxScore: 0,
+          passCount: 0,
+        };
+        current.scorecards += 1;
+        current.totalScore += Number(item.score || 0);
+        current.totalMaxScore += Number(item.maxScore || 0);
+        if (item.rating === 'PASS') current.passCount += 1;
+        byAgent.set(item.agentId, current);
+      }
+      const summary = [...byAgent.values()]
+        .map((row) => ({
+          ...row,
+          averageScore: row.scorecards ? Number((row.totalScore / row.scorecards).toFixed(2)) : 0,
+          qualityRate: row.totalMaxScore > 0 ? Number(((row.totalScore / row.totalMaxScore) * 100).toFixed(2)) : 0,
+          passRate: row.scorecards ? Number(((row.passCount / row.scorecards) * 100).toFixed(2)) : 0,
+        }))
+        .sort((a, b) => b.averageScore - a.averageScore);
+      return res.json({
+        from: from?.toISOString() || null,
+        to: to?.toISOString() || null,
+        totalScorecards: rows.length,
+        byAgent: summary,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch QA scorecards summary' });
+    }
+  });
+
+  app.post('/api/qa/scorecards', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const agentId = parseInteger(req.body?.agentId);
+      const leadId = parseInteger(req.body?.leadId);
+      const interactionId = parseInteger(req.body?.interactionId);
+      const score = Number(req.body?.score);
+      const maxScoreInput = req.body?.maxScore;
+      const maxScore = maxScoreInput === undefined ? 100 : Number(maxScoreInput);
+      const notes = normalizeNullableString(req.body?.notes, 2000);
+      const callDate = parseDateTime(req.body?.callDate);
+      const checklistJson = normalizeJsonText(req.body?.checklistJson ?? req.body?.checklist, 20000);
+
+      if (!agentId || agentId < 1) return res.status(400).json({ error: 'agentId is required' });
+      if (!Number.isFinite(score) || score < 0) return res.status(400).json({ error: 'score must be a non-negative number' });
+      if (!Number.isFinite(maxScore) || maxScore <= 0) return res.status(400).json({ error: 'maxScore must be a positive number' });
+      if (score > maxScore) return res.status(400).json({ error: 'score cannot exceed maxScore' });
+
+      const agent = await prisma.user.findFirst({
+        where: { id: agentId, tenantId: actor.tenantId },
+        select: { id: true, teamId: true, role: true },
+      });
+      if (!agent) return res.status(404).json({ error: 'Agent not found in tenant' });
+      if (actor.role === 'TEAM_LEAD' && actor.teamId && agent.teamId !== actor.teamId) {
+        return res.status(403).json({ error: 'Cannot score users outside your team' });
+      }
+
+      if (leadId && leadId > 0) {
+        const lead = await prisma.lead.findFirst({ where: { id: leadId, tenantId: actor.tenantId }, select: { id: true } });
+        if (!lead) return res.status(404).json({ error: 'Lead not found in tenant' });
+      }
+      if (interactionId && interactionId > 0) {
+        const interaction = await prisma.interaction.findFirst({
+          where: { id: interactionId, lead: { tenantId: actor.tenantId } },
+          select: { id: true },
+        });
+        if (!interaction) return res.status(404).json({ error: 'Interaction not found in tenant' });
+      }
+
+      const qualityRate = (score / maxScore) * 100;
+      const defaultRating = qualityRate >= 85 ? 'PASS' : (qualityRate >= 70 ? 'NEEDS_COACHING' : 'FAIL');
+      const rating = normalizeQARating(req.body?.rating, defaultRating);
+      const now = new Date();
+
+      const result = await prisma.$transaction(async (tx) => {
+        const created = await tx.qAScorecard.create({
+          data: {
+            tenantId: actor.tenantId,
+            agentId,
+            reviewerId: actor.id,
+            leadId: leadId && leadId > 0 ? leadId : null,
+            interactionId: interactionId && interactionId > 0 ? interactionId : null,
+            score,
+            maxScore,
+            rating,
+            checklistJson,
+            notes,
+            callDate,
+            evaluatedAt: now,
+          },
+          include: {
+            agent: { select: { id: true, name: true, email: true } },
+            reviewer: { select: { id: true, name: true, email: true } },
+          },
+        });
+        let awardedPoints = 0;
+        if (created.rating === 'PASS') {
+          const setting = await ensureGamificationSetting(actor.tenantId, tx);
+          if (setting.enabled && setting.pointsPerQaPass > 0) {
+            await createGamificationPointEntries({
+              tx,
+              tenantId: actor.tenantId,
+              userId: agentId,
+              sourceType: 'QA_PASS',
+              referenceId: created.id,
+              points: setting.pointsPerQaPass,
+              notes: `QA pass scorecard #${created.id}`,
+              occurredAt: now,
+            });
+            awardedPoints = setting.pointsPerQaPass;
+          }
+        }
+        return { created, awardedPoints };
+      });
+
+      return res.status(201).json(result);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to create QA scorecard' });
+    }
+  });
+
+  // --- A/B Tests ---
+
+  app.get('/api/ab-tests', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const status = normalizeABStatus(normalizeSingleQueryValue(req.query.status), null);
+      const channel = normalizeABChannel(normalizeSingleQueryValue(req.query.channel), null);
+      const rows = await prisma.aBTest.findMany({
+        where: {
+          tenantId: actor.tenantId,
+          ...(status ? { status } : {}),
+          ...(channel ? { channel } : {}),
+        },
+        include: {
+          variants: true,
+          _count: { select: { events: true } },
+        },
+        orderBy: [{ createdAt: 'desc' }],
+      });
+      return res.json(rows);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch A/B tests' });
+    }
+  });
+
+  app.post('/api/ab-tests', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const name = normalizeNullableString(req.body?.name, 180);
+      const channel = normalizeABChannel(req.body?.channel, null);
+      const status = normalizeABStatus(req.body?.status, 'DRAFT');
+      const hypothesis = normalizeNullableString(req.body?.hypothesis, 1500);
+      const startAt = parseDateTime(req.body?.startAt);
+      const endAt = parseDateTime(req.body?.endAt);
+      const variantsInput = Array.isArray(req.body?.variants) ? req.body.variants : [];
+      if (!name || !channel) return res.status(400).json({ error: 'name and valid channel are required' });
+      if (variantsInput.length < 2) return res.status(400).json({ error: 'At least 2 variants are required' });
+
+      const seen = new Set();
+      const variants = [];
+      for (let idx = 0; idx < variantsInput.length; idx += 1) {
+        const raw = variantsInput[idx];
+        const key = normalizeNullableString(raw?.key, 40);
+        const label = normalizeNullableString(raw?.label, 120);
+        const content = normalizeNullableString(raw?.content, 5000);
+        const isControl = raw?.isControl === true;
+        if (!key || !label || !content) return res.status(400).json({ error: `Invalid variant at index ${idx}` });
+        if (seen.has(key)) return res.status(400).json({ error: `Duplicate variant key: ${key}` });
+        seen.add(key);
+        variants.push({ key, label, content, isControl });
+      }
+      const controlCount = variants.filter((v) => v.isControl).length;
+      if (controlCount !== 1) return res.status(400).json({ error: 'Exactly one variant must be marked as control' });
+
+      const created = await prisma.aBTest.create({
+        data: {
+          tenantId: actor.tenantId,
+          name,
+          channel,
+          status,
+          hypothesis,
+          startAt,
+          endAt,
+          createdById: actor.id,
+          variants: { create: variants },
+        },
+        include: { variants: true },
+      });
+      return res.status(201).json(created);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to create A/B test' });
+    }
+  });
+
+  app.put('/api/ab-tests/:id', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const testId = parseInteger(req.params.id);
+    if (!testId || testId < 1) return res.status(400).json({ error: 'Invalid test id' });
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+      const existing = await prisma.aBTest.findFirst({
+        where: { id: testId, tenantId: actor.tenantId },
+        include: { variants: true },
+      });
+      if (!existing) return res.status(404).json({ error: 'A/B test not found' });
+
+      const payload = {};
+      if (Object.prototype.hasOwnProperty.call(req.body, 'name')) {
+        const name = normalizeNullableString(req.body?.name, 180);
+        if (!name) return res.status(400).json({ error: 'Invalid name' });
+        payload.name = name;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'channel')) {
+        const channel = normalizeABChannel(req.body?.channel, null);
+        if (!channel) return res.status(400).json({ error: 'Invalid channel' });
+        payload.channel = channel;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'status')) {
+        const status = normalizeABStatus(req.body?.status, null);
+        if (!status) return res.status(400).json({ error: 'Invalid status' });
+        payload.status = status;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'hypothesis')) {
+        payload.hypothesis = normalizeNullableString(req.body?.hypothesis, 1500);
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'startAt')) {
+        const startAt = parseDateTime(req.body?.startAt);
+        if (!startAt) return res.status(400).json({ error: 'Invalid startAt' });
+        payload.startAt = startAt;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'endAt')) {
+        const endAt = parseDateTime(req.body?.endAt);
+        if (!endAt) return res.status(400).json({ error: 'Invalid endAt' });
+        payload.endAt = endAt;
+      }
+
+      const updated = await prisma.aBTest.update({
+        where: { id: testId },
+        data: payload,
+        include: { variants: true },
+      });
+      return res.json(updated);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to update A/B test' });
+    }
+  });
+
+  app.post('/api/ab-tests/:id/events', authenticateToken, async (req, res) => {
+    const testId = parseInteger(req.params.id);
+    if (!testId || testId < 1) return res.status(400).json({ error: 'Invalid test id' });
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const variantId = parseInteger(req.body?.variantId);
+      const eventType = normalizeABEventType(req.body?.eventType, null);
+      const leadId = parseInteger(req.body?.leadId);
+      const metadataJson = normalizeJsonText(req.body?.metadataJson ?? req.body?.metadata, 4000);
+      if (!variantId || variantId < 1 || !eventType) return res.status(400).json({ error: 'variantId and valid eventType are required' });
+
+      const test = await prisma.aBTest.findFirst({ where: { id: testId, tenantId: actor.tenantId }, select: { id: true } });
+      if (!test) return res.status(404).json({ error: 'A/B test not found' });
+      const variant = await prisma.aBTestVariant.findFirst({ where: { id: variantId, testId }, select: { id: true } });
+      if (!variant) return res.status(404).json({ error: 'Variant not found in this test' });
+      if (leadId && leadId > 0) {
+        const lead = await prisma.lead.findFirst({ where: { id: leadId, tenantId: actor.tenantId }, select: { id: true } });
+        if (!lead) return res.status(404).json({ error: 'Lead not found in tenant' });
+      }
+
+      const created = await prisma.aBTestEvent.create({
+        data: {
+          tenantId: actor.tenantId,
+          testId,
+          variantId,
+          userId: actor.id,
+          leadId: leadId && leadId > 0 ? leadId : null,
+          eventType,
+          metadataJson,
+        },
+      });
+      return res.status(201).json(created);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to log A/B test event' });
+    }
+  });
+
+  app.get('/api/ab-tests/:id/report', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    const testId = parseInteger(req.params.id);
+    if (!testId || testId < 1) return res.status(400).json({ error: 'Invalid test id' });
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+      const from = parseDateTime(normalizeSingleQueryValue(req.query.from));
+      const to = parseDateTime(normalizeSingleQueryValue(req.query.to));
+
+      const test = await prisma.aBTest.findFirst({
+        where: { id: testId, tenantId: actor.tenantId },
+        include: { variants: true },
+      });
+      if (!test) return res.status(404).json({ error: 'A/B test not found' });
+
+      const events = await prisma.aBTestEvent.findMany({
+        where: {
+          testId,
+          tenantId: actor.tenantId,
+          ...(from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}),
+        },
+        select: { variantId: true, eventType: true, createdAt: true },
+      });
+      const variantsMap = new Map(test.variants.map((v) => [v.id, {
+        id: v.id,
+        key: v.key,
+        label: v.label,
+        isControl: v.isControl,
+        impressions: 0,
+        conversions: 0,
+      }]));
+      for (const event of events) {
+        const row = variantsMap.get(event.variantId);
+        if (!row) continue;
+        if (event.eventType === 'IMPRESSION') row.impressions += 1;
+        if (event.eventType === 'CONVERSION') row.conversions += 1;
+      }
+      const variants = [...variantsMap.values()].map((row) => ({
+        ...row,
+        conversionRate: row.impressions > 0 ? Number(((row.conversions / row.impressions) * 100).toFixed(2)) : 0,
+      }));
+      return res.json({
+        test: {
+          id: test.id,
+          name: test.name,
+          channel: test.channel,
+          status: test.status,
+          startAt: test.startAt,
+          endAt: test.endAt,
+        },
+        range: { from: from?.toISOString() || null, to: to?.toISOString() || null },
+        totals: {
+          impressions: variants.reduce((acc, row) => acc + row.impressions, 0),
+          conversions: variants.reduce((acc, row) => acc + row.conversions, 0),
+        },
+        variants,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to build A/B test report' });
+    }
+  });
+
+  // --- Gamification ---
+
+  app.get('/api/gamification/settings', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+      const setting = await ensureGamificationSetting(actor.tenantId);
+      return res.json(setting);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch gamification settings' });
+    }
+  });
+
+  app.put('/api/gamification/settings', authenticateToken, authorizeRole(['ADMIN']), async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+      const payload = {};
+      const intFields = [
+        'pointsPerCall', 'pointsPerInterested', 'pointsPerAgreed', 'pointsPerQaPass',
+        'dailyGoalPoints', 'weeklyGoalPoints',
+      ];
+      for (const field of intFields) {
+        if (!Object.prototype.hasOwnProperty.call(req.body, field)) continue;
+        const parsed = parseInteger(req.body?.[field]);
+        if (parsed === null || parsed < 0 || parsed > 5000) {
+          return res.status(400).json({ error: `${field} must be integer between 0 and 5000` });
+        }
+        payload[field] = parsed;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'enabled')) {
+        if (typeof req.body.enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be boolean' });
+        payload.enabled = req.body.enabled;
+      }
+      const updated = await prisma.gamificationSetting.upsert({
+        where: { tenantId: actor.tenantId },
+        update: payload,
+        create: {
+          tenantId: actor.tenantId,
+          enabled: payload.enabled ?? true,
+          pointsPerCall: payload.pointsPerCall ?? 1,
+          pointsPerInterested: payload.pointsPerInterested ?? 5,
+          pointsPerAgreed: payload.pointsPerAgreed ?? 12,
+          pointsPerQaPass: payload.pointsPerQaPass ?? 8,
+          dailyGoalPoints: payload.dailyGoalPoints ?? 30,
+          weeklyGoalPoints: payload.weeklyGoalPoints ?? 150,
+        },
+      });
+      return res.json(updated);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to update gamification settings' });
+    }
+  });
+
+  app.post('/api/gamification/points', authenticateToken, authorizeRole(['ADMIN', 'TEAM_LEAD']), async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const userId = parseInteger(req.body?.userId);
+      const points = parseInteger(req.body?.points);
+      const sourceType = normalizeGamificationPointSource(req.body?.sourceType, 'MANUAL');
+      const referenceId = parseInteger(req.body?.referenceId);
+      const notes = normalizeNullableString(req.body?.notes, 500);
+      if (!userId || userId < 1) return res.status(400).json({ error: 'userId is required' });
+      if (points === null || points === 0 || Math.abs(points) > 5000) {
+        return res.status(400).json({ error: 'points must be non-zero integer with absolute value <= 5000' });
+      }
+
+      const user = await prisma.user.findFirst({
+        where: { id: userId, tenantId: actor.tenantId },
+        select: { id: true, teamId: true },
+      });
+      if (!user) return res.status(404).json({ error: 'User not found in tenant' });
+      if (actor.role === 'TEAM_LEAD' && actor.teamId && user.teamId !== actor.teamId) {
+        return res.status(403).json({ error: 'Cannot assign points outside your team' });
+      }
+      const created = await createGamificationPointEntries({
+        tenantId: actor.tenantId,
+        userId,
+        sourceType,
+        referenceId: referenceId && referenceId > 0 ? referenceId : null,
+        points,
+        notes,
+      });
+      return res.status(201).json({ createdCount: created.length, logs: created });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to add gamification points' });
+    }
+  });
+
+  app.get('/api/gamification/leaderboard', authenticateToken, async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+
+      const periodType = normalizeGamificationPeriodType(normalizeSingleQueryValue(req.query.periodType), 'DAILY');
+      const anchor = parseDateTime(normalizeSingleQueryValue(req.query.date)) || new Date();
+      const { start, end } = buildPeriodBounds(periodType, anchor);
+      const setting = await ensureGamificationSetting(actor.tenantId);
+
+      const grouped = await prisma.gamificationPointLog.groupBy({
+        by: ['userId'],
+        where: {
+          tenantId: actor.tenantId,
+          periodType,
+          periodStart: start,
+          periodEnd: end,
+        },
+        _sum: { points: true },
+      });
+      const userIds = grouped.map((row) => row.userId);
+      const users = userIds.length
+        ? await prisma.user.findMany({
+          where: { id: { in: userIds }, tenantId: actor.tenantId },
+          select: { id: true, name: true, email: true, role: true },
+        })
+        : [];
+      const usersMap = new Map(users.map((u) => [u.id, u]));
+      const goal = periodType === 'WEEKLY' ? setting.weeklyGoalPoints : setting.dailyGoalPoints;
+      const leaderboard = grouped
+        .map((row) => {
+          const user = usersMap.get(row.userId);
+          const points = Number(row._sum.points || 0);
+          return {
+            userId: row.userId,
+            name: user?.name || 'Unknown',
+            email: user?.email || null,
+            role: user?.role || null,
+            points,
+            goal,
+            goalProgress: goal > 0 ? Number(((points / goal) * 100).toFixed(2)) : 0,
+          };
+        })
+        .sort((a, b) => b.points - a.points)
+        .map((row, index) => ({ ...row, rank: index + 1 }));
+
+      return res.json({
+        periodType,
+        periodStart: start,
+        periodEnd: end,
+        goal,
+        leaderboard,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch gamification leaderboard' });
+    }
+  });
+
+  app.get('/api/gamification/my-points', authenticateToken, async (req, res) => {
+    try {
+      const actor = await getCurrentUserScope(req.user.id);
+      if (!actor) return res.status(401).json({ error: 'Invalid user context' });
+      const actorTenantError = assertTenantScopedUser(actor);
+      if (actorTenantError) return res.status(400).json({ error: actorTenantError });
+      const periodType = normalizeGamificationPeriodType(normalizeSingleQueryValue(req.query.periodType), 'DAILY');
+      const anchor = parseDateTime(normalizeSingleQueryValue(req.query.date)) || new Date();
+      const { start, end } = buildPeriodBounds(periodType, anchor);
+
+      const logs = await prisma.gamificationPointLog.findMany({
+        where: {
+          tenantId: actor.tenantId,
+          userId: actor.id,
+          periodType,
+          periodStart: start,
+          periodEnd: end,
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: 200,
+      });
+      const totalPoints = logs.reduce((acc, row) => acc + Number(row.points || 0), 0);
+      return res.json({
+        periodType,
+        periodStart: start,
+        periodEnd: end,
+        totalPoints,
+        logs,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Failed to fetch points log' });
+    }
+  });
+
   // --- Release Notes Routes ---
+
+  const buildReleaseNoteVisibilityWhere = ({ actor, includeUnpublished = false }) => ({
+    OR: [
+      { tenantId: actor.tenantId },
+      { isGlobal: true },
+    ],
+    ...(includeUnpublished && actor.role === 'ADMIN' ? {} : { isPublished: true }),
+  });
 
   app.get('/api/release-notes', authenticateToken, async (req, res) => {
     try {
@@ -5566,10 +6837,7 @@ async function startServer() {
       if (actorTenantError) return res.status(400).json({ error: actorTenantError });
 
       const includeUnpublished = String(req.query.includeUnpublished || '').toLowerCase() === 'true';
-      const where = {
-        tenantId: actor.tenantId,
-        ...(includeUnpublished && actor.role === 'ADMIN' ? {} : { isPublished: true }),
-      };
+      const where = buildReleaseNoteVisibilityWhere({ actor, includeUnpublished });
       const notes = await prisma.releaseNote.findMany({
         where,
         include: {
@@ -5601,8 +6869,15 @@ async function startServer() {
       if (actorTenantError) return res.status(400).json({ error: actorTenantError });
 
       const [total, reads] = await Promise.all([
-        prisma.releaseNote.count({ where: { tenantId: actor.tenantId, isPublished: true } }),
-        prisma.releaseNoteRead.count({ where: { userId: actor.id, releaseNote: { tenantId: actor.tenantId, isPublished: true } } }),
+        prisma.releaseNote.count({
+          where: buildReleaseNoteVisibilityWhere({ actor, includeUnpublished: false }),
+        }),
+        prisma.releaseNoteRead.count({
+          where: {
+            userId: actor.id,
+            releaseNote: buildReleaseNoteVisibilityWhere({ actor, includeUnpublished: false }),
+          },
+        }),
       ]);
       return res.json({ unreadCount: Math.max(0, total - reads) });
     } catch (error) {
@@ -5621,7 +6896,7 @@ async function startServer() {
       if (actorTenantError) return res.status(400).json({ error: actorTenantError });
 
       const note = await prisma.releaseNote.findFirst({
-        where: { id: releaseNoteId, tenantId: actor.tenantId, isPublished: true },
+        where: { id: releaseNoteId, ...buildReleaseNoteVisibilityWhere({ actor, includeUnpublished: false }) },
         select: { id: true },
       });
       if (!note) return res.status(404).json({ error: 'Release note not found' });
@@ -5646,7 +6921,7 @@ async function startServer() {
       if (actorTenantError) return res.status(400).json({ error: actorTenantError });
 
       const notes = await prisma.releaseNote.findMany({
-        where: { tenantId: actor.tenantId, isPublished: true },
+        where: buildReleaseNoteVisibilityWhere({ actor, includeUnpublished: false }),
         select: { id: true },
       });
       const now = new Date();
@@ -5669,6 +6944,7 @@ async function startServer() {
     const title = normalizeNullableString(req.body?.title, 200);
     const body = normalizeNullableString(req.body?.body, 10000);
     const version = normalizeNullableString(req.body?.version, 60);
+    const isGlobal = req.body?.isGlobal === true;
     const isPublished = req.body?.isPublished !== false;
     const publishedAt = parseDateTime(req.body?.publishedAt) || new Date();
     if (!title || !body) return res.status(400).json({ error: 'title and body are required' });
@@ -5683,6 +6959,7 @@ async function startServer() {
           title,
           body,
           version,
+          isGlobal,
           isPublished: Boolean(isPublished),
           publishedAt,
           tenantId: actor.tenantId,
@@ -5725,6 +7002,10 @@ async function startServer() {
       if (Object.prototype.hasOwnProperty.call(req.body, 'isPublished')) {
         if (typeof req.body.isPublished !== 'boolean') return res.status(400).json({ error: 'isPublished must be boolean' });
         payload.isPublished = req.body.isPublished;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'isGlobal')) {
+        if (typeof req.body.isGlobal !== 'boolean') return res.status(400).json({ error: 'isGlobal must be boolean' });
+        payload.isGlobal = req.body.isGlobal;
       }
       if (Object.prototype.hasOwnProperty.call(req.body, 'publishedAt')) {
         const publishedAt = parseDateTime(req.body?.publishedAt);
@@ -5777,9 +7058,10 @@ async function startServer() {
         DEFAULT_TEMPLATES.map((template) =>
           prisma.messageTemplate.upsert({
             where: { tenantId_status: { tenantId: actor.tenantId, status: template.status } },
-            update: {},
+            update: { content: ensureTemplateNominationIntro(template.content) },
             create: {
               ...template,
+              content: ensureTemplateNominationIntro(template.content),
               tenantId: actor.tenantId,
             },
           }),
@@ -5789,16 +7071,31 @@ async function startServer() {
         where: { tenantId: actor.tenantId },
         orderBy: { id: 'asc' },
       });
+      await Promise.all(
+        templates.map((template) => {
+          const normalized = ensureTemplateNominationIntro(template.content);
+          if (normalized === template.content) return Promise.resolve(null);
+          return prisma.messageTemplate.update({
+            where: { id: template.id },
+            data: { content: normalized },
+          });
+        }),
+      );
+      const normalizedTemplates = templates.map((template) => ({
+        ...template,
+        content: ensureTemplateNominationIntro(template.content),
+      }));
       const bucket = readAssistantTraining();
       const tenantKey = String(actor.tenantId);
       const tenantBucket = bucket[tenantKey] || {};
       const userOverrides = tenantBucket?.templates?.users?.[String(actor.id)] || {};
-      const response = templates.map((template) => {
+      const response = normalizedTemplates.map((template) => {
         const override = userOverrides?.[template.status];
         if (typeof override === 'string' && override.trim()) {
-          return { ...template, content: override, scope: 'USER' };
+          return { ...template, content: ensureTemplateNominationIntro(override), scope: 'USER' };
         }
-        return { ...template, scope: 'TENANT' };
+        const normalizedTemplateContent = ensureTemplateNominationIntro(template.content);
+        return { ...template, content: normalizedTemplateContent, scope: 'TENANT' };
       });
       res.json(response);
     } catch (error) {
@@ -5834,15 +7131,17 @@ async function startServer() {
         if (actor.role !== 'ADMIN') {
           return res.status(403).json({ error: 'Only admin can update tenant default template' });
         }
+        const normalizedContent = ensureTemplateNominationIntro(content);
         await prisma.messageTemplate.update({
           where: { id: templateId },
-          data: { content },
+          data: { content: normalizedContent },
         });
         const updatedTemplate = await prisma.messageTemplate.findFirst({
           where: { id: templateId, tenantId: actor.tenantId },
         });
-        return res.json({ ...updatedTemplate, scope: 'TENANT' });
+        return res.json({ ...updatedTemplate, content: ensureTemplateNominationIntro(updatedTemplate?.content), scope: 'TENANT' });
       }
+      const normalizedContent = ensureTemplateNominationIntro(content);
       const bucket = readAssistantTraining();
       const tenantKey = String(actor.tenantId);
       bucket[tenantKey] = bucket[tenantKey] || {};
@@ -5850,10 +7149,10 @@ async function startServer() {
       bucket[tenantKey].templates.users = bucket[tenantKey].templates.users || {};
       bucket[tenantKey].templates.users[String(actor.id)] = {
         ...(bucket[tenantKey].templates.users[String(actor.id)] || {}),
-        [template.status]: content,
+        [template.status]: normalizedContent,
       };
       writeAssistantTraining(bucket);
-      return res.json({ ...template, content, scope: 'USER' });
+      return res.json({ ...template, content: normalizedContent, scope: 'USER' });
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Failed to update template' });
