@@ -567,18 +567,32 @@ const normalizeEgyptMobile = (value) => {
   if (typeof value !== 'string' && typeof value !== 'number') return null;
   let digits = toAsciiDigits(String(value)).trim().replace(/\D/g, '');
   if (!digits) return null;
-  if (digits.startsWith('00')) digits = digits.replace(/^00+/, '');
 
-  const compactPatterns = [
-    /^1([0125][0-9]{8})$/,      // 10 digits, no leading 0
-    /^01([0125][0-9]{8})$/,     // 11 digits, local Egyptian mobile
-    /^20(1[0125][0-9]{8})$/,    // 12 digits, country code 20
-    /^020(1[0125][0-9]{8})$/,   // 13 digits, rare prefixed format
-  ];
-  for (const pattern of compactPatterns) {
-    const match = digits.match(pattern);
-    if (match?.[1]) return `0${match[1]}`;
+  // Handle various Egyptian formats and common mis-normalizations
+  // Format: 01... (11 digits)
+  if (/^01[0125][0-9]{8}$/.test(digits)) return digits;
+
+  // Format: 1... (10 digits) -> 01...
+  if (/^1[0125][0-9]{8}$/.test(digits)) return `0${digits}`;
+
+  // Format: 201... (12 digits) -> 01...
+  if (/^201[0125][0-9]{8}$/.test(digits)) return `0${digits.slice(2)}`;
+
+  // Format: 00201... (14 digits) -> 01...
+  if (/^00201[0125][0-9]{8}$/.test(digits)) return `0${digits.slice(4)}`;
+
+  // Format: 0001... (12+ digits) likely a mis-normalized 01...
+  // Example: 0001639391 -> 01001639391 or similar
+  if (digits.startsWith('0001')) {
+     // If it's 0001 followed by 9 digits, it's 11 digits total if we replace 000 with 0
+     const potential = '0' + digits.slice(3);
+     if (/^01[0125][0-9]{8}$/.test(potential)) return potential;
   }
+
+  // Generic fallback: if it has 11 digits and looks like an Egyptian number after stripping zeros
+  let stripped = digits.replace(/^0+/, '');
+  if (/^1[0125][0-9]{8}$/.test(stripped)) return `0${stripped}`;
+
   return null;
 };
 
