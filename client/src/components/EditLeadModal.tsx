@@ -184,7 +184,7 @@ export default function EditLeadModal({ lead, onClose, onUpdate }: Props) {
           </button>
         </div>
 
-        <form id="edit-lead-form" onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
+        <form id="edit-lead-form" onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1 min-h-0">
           <div className="grid md:grid-cols-2 gap-6">
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700">اسم العميل</label>
@@ -246,7 +246,7 @@ export default function EditLeadModal({ lead, onClose, onUpdate }: Props) {
 
           <div className="space-y-4">
             <label className="text-sm font-bold text-slate-700">تحديث الحالة</label>
-            <div className="grid grid-cols-2 md:grid-cols-8 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
               {[
                 { value: 'NEW', label: 'جديد', color: 'bg-slate-100' },
                 { value: 'INTERESTED', label: 'مهتم', color: 'bg-cyan-100 text-cyan-700' },
