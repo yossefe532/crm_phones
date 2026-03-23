@@ -95,7 +95,7 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || '';
 const allowedOrigins = CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean);
 const ASSISTANT_TRAINING_FILE = join(__dirname, 'assistant-training.json');
 const MAINTENANCE_STATE_FILE = join(__dirname, 'maintenance-state.json');
-const DEFAULT_MAINTENANCE_MESSAGE = 'النظام تحت الصيانة حالياً. يرجى المحاولة لاحقاً.';
+const DEFAULT_MAINTENANCE_MESSAGE = 'النظام تحت الصيانة حالياً.. ثواني و هنرجع تاني.';
 
 const normalizeMaintenanceMessage = (value) => {
   if (typeof value !== 'string') return null;

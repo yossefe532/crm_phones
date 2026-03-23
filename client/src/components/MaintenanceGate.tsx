@@ -9,7 +9,7 @@ type MaintenancePayload = {
   updatedAt: string | null;
 };
 
-const DEFAULT_MESSAGE = 'النظام تحت الصيانة حالياً. يرجى المحاولة لاحقاً.';
+const DEFAULT_MESSAGE = 'النظام تحت الصيانة حالياً.. ثواني و هنرجع تاني.';
 const POLL_INTERVAL_MS = 15000;
 
 export default function MaintenanceGate() {
@@ -151,6 +151,7 @@ export default function MaintenanceGate() {
             </div>
 
             <h2 className="mt-4 text-2xl font-black">وضع الصيانة</h2>
+            <p className="mt-1 text-amber-400 font-bold">ثواني و هنرجع تاني</p>
             <p className="mt-3 text-sm leading-7 text-slate-200">{maintenance.message}</p>
             {updatedAtLabel && (
               <p className="mt-2 text-xs text-slate-300">آخر تحديث: {updatedAtLabel}</p>

@@ -17,8 +17,7 @@ const schema = z.object({
   whatsappPhone: z
     .string()
     .optional()
-    .transform((v) => (v ? v.replace(/\s+/g, '') : v))
-    .refine((v) => !v || EGYPT_MOBILE_REGEX.test(v), 'رقم الواتساب غير صحيح'),
+    .refine((v) => !v || EGYPT_MOBILE_REGEX.test(v.replace(/\s+/g, '')), 'رقم الواتساب غير صحيح'),
   gender: z.enum(['MALE', 'FEMALE', 'UNKNOWN']),
 });
 

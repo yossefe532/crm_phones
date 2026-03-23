@@ -24,15 +24,11 @@ const EGYPT_MOBILE_REGEX = /^(01[0125][0-9]{8}|20[1235][0-9]{9})$/;
 
 const leadSchema = z.object({
   name: z.string().min(3, 'الاسم يجب أن يكون 3 أحرف على الأقل'),
-  phone: z
-    .string()
-    .transform((v) => v.replace(/\s+/g, ''))
-    .refine((v) => EGYPT_MOBILE_REGEX.test(v), 'رقم الهاتف غير صحيح (ابدأ بـ 01 أو 20)'),
+  phone: z.string().refine((v) => EGYPT_MOBILE_REGEX.test(v.replace(/\s+/g, '')), 'رقم الهاتف غير صحيح (ابدأ بـ 01 أو 20)'),
   whatsappPhone: z
     .string()
     .optional()
-    .transform((v) => (v ? v.replace(/\s+/g, '') : v))
-    .refine((v) => !v || EGYPT_MOBILE_REGEX.test(v), 'رقم الواتساب غير صحيح'),
+    .refine((v) => !v || EGYPT_MOBILE_REGEX.test(v.replace(/\s+/g, '')), 'رقم الواتساب غير صحيح'),
   notes: z.string().optional(),
   profileDetails: z.string().optional(),
   status: z.enum(['NEW', 'INTERESTED', 'AGREED', 'HESITANT', 'REJECTED', 'SPONSOR', 'NO_ANSWER', 'RECONTACT', 'WRONG_NUMBER']),
