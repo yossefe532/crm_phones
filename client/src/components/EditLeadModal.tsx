@@ -17,7 +17,8 @@ const schema = z.object({
   whatsappPhone: z
     .string()
     .optional()
-    .refine((value) => !value || EGYPT_MOBILE_REGEX.test(value), 'رقم الواتساب غير صحيح'),
+    .transform((v) => (v ? v.replace(/\s+/g, '') : v))
+    .refine((v) => !v || EGYPT_MOBILE_REGEX.test(v), 'رقم الواتساب غير صحيح'),
   gender: z.enum(['MALE', 'FEMALE', 'UNKNOWN']),
 });
 
@@ -176,15 +177,15 @@ export default function EditLeadModal({ lead, onClose, onUpdate }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden">
-        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[95vh] flex flex-col overflow-hidden">
+        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 flex-shrink-0">
           <h3 className="text-xl font-bold text-slate-800">تعديل بيانات العميل</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
             <X size={24} />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-6">
+        <form id="edit-lead-form" onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
           <div className="grid md:grid-cols-2 gap-6">
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700">اسم العميل</label>
@@ -319,29 +320,30 @@ export default function EditLeadModal({ lead, onClose, onUpdate }: Props) {
               placeholder="أضف ملاحظاتك هنا..."
             />
           </div>
-
-          <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-6 py-2 rounded-xl font-bold text-slate-500 hover:bg-slate-100 transition-colors"
-            >
-              إلغاء
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="btn-primary min-w-[120px] flex items-center justify-center gap-2"
-            >
-              {loading ? <span className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></span> : (
-                <>
-                  <Check size={20} />
-                  <span>حفظ التعديلات</span>
-                </>
-              )}
-            </button>
-          </div>
         </form>
+
+        <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex justify-end gap-3 flex-shrink-0">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-6 py-2 rounded-xl font-bold text-slate-500 hover:bg-slate-100 transition-colors"
+          >
+            إلغاء
+          </button>
+          <button
+            form="edit-lead-form"
+            type="submit"
+            disabled={loading}
+            className="btn-primary min-w-[120px] flex items-center justify-center gap-2"
+          >
+            {loading ? <span className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></span> : (
+              <>
+                <Check size={20} />
+                <span>حفظ التعديلات</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );

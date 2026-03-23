@@ -4442,7 +4442,34 @@ async function startServer() {
         });
         const tenantSalesIds = allTenantSales.map(m => m.id);
 
-        const tenantCallsTodayByAgent = tenantSalesIds.length ? await prisma.interaction.groupBy({
+        const tenantLeadsTouchedToday = tenantSalesIds.length ? await prisma.lead.findMany({
+          where: {
+            tenantId: actor.tenantId,
+            interactions: {
+              some: {
+                userId: { in: tenantSalesIds },
+                type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
+                date: { gte: start, lt: end },
+              }
+            }
+          },
+          select: {
+            id: true,
+            status: true,
+            interactions: {
+              where: {
+                userId: { in: tenantSalesIds },
+                type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
+                date: { gte: start, lt: end },
+              },
+              orderBy: { date: 'desc' },
+              take: 1,
+              select: { userId: true }
+            }
+          }
+        }) : [];
+
+        const tCallsRes = tenantSalesIds.length ? await prisma.interaction.groupBy({
           by: ['userId'],
           where: {
             userId: { in: tenantSalesIds },
@@ -4452,40 +4479,24 @@ async function startServer() {
           _count: { _all: true },
         }) : [];
 
-        const tenantAgreedTodayByAgent = tenantSalesIds.length ? await prisma.interaction.groupBy({
-          by: ['userId'],
-          where: {
-            userId: { in: tenantSalesIds },
-            type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
-            outcome: 'AGREED',
-            date: { gte: start, lt: end },
-          },
-          _count: { _all: true },
-        }) : [];
-        const tenantInterestedTodayByAgent = tenantSalesIds.length ? await prisma.interaction.groupBy({
-          by: ['userId'],
-          where: {
-            userId: { in: tenantSalesIds },
-            type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
-            outcome: 'INTERESTED',
-            date: { gte: start, lt: end },
-          },
-          _count: { _all: true },
-        }) : [];
-
-        const tCallsMap = tenantCallsTodayByAgent.reduce((acc, row) => {
+        const tCallsMap = tCallsRes.reduce((acc, row) => {
           acc[row.userId] = row._count._all;
           return acc;
         }, {});
 
-        const tAgreedMap = tenantAgreedTodayByAgent.reduce((acc, row) => {
-          acc[row.userId] = row._count._all;
-          return acc;
-        }, {});
-        const tInterestedMap = tenantInterestedTodayByAgent.reduce((acc, row) => {
-          acc[row.userId] = row._count._all;
-          return acc;
-        }, {});
+        const tAgreedMap = {};
+        const tInterestedMap = {};
+
+        tenantLeadsTouchedToday.forEach(lead => {
+          const lastInteraction = lead.interactions[0];
+          if (!lastInteraction) return;
+          const uId = lastInteraction.userId;
+          if (lead.status === 'AGREED') {
+            tAgreedMap[uId] = (tAgreedMap[uId] || 0) + 1;
+          } else if (lead.status === 'INTERESTED') {
+            tInterestedMap[uId] = (tInterestedMap[uId] || 0) + 1;
+          }
+        });
 
         leaderboard = allTenantSales.map(m => ({
           userId: m.id,
@@ -4559,23 +4570,31 @@ async function startServer() {
             lead: { tenantId: actor.tenantId },
           },
         });
-        approvalsToday = await prisma.interaction.count({
+        approvalsToday = await prisma.lead.count({
           where: {
-            userId: req.user.id,
-            type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
-            outcome: 'AGREED',
-            date: { gte: start, lt: end },
-            lead: { tenantId: actor.tenantId },
-          },
+            tenantId: actor.tenantId,
+            status: 'AGREED',
+            interactions: {
+              some: {
+                userId: req.user.id,
+                type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
+                date: { gte: start, lt: end },
+              }
+            }
+          }
         });
-        interestedToday = await prisma.interaction.count({
+        interestedToday = await prisma.lead.count({
           where: {
-            userId: req.user.id,
-            type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
-            outcome: 'INTERESTED',
-            date: { gte: start, lt: end },
-            lead: { tenantId: actor.tenantId },
-          },
+            tenantId: actor.tenantId,
+            status: 'INTERESTED',
+            interactions: {
+              some: {
+                userId: req.user.id,
+                type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
+                date: { gte: start, lt: end },
+              }
+            }
+          }
         });
         callsYesterday = await prisma.interaction.count({
           where: {
@@ -4585,23 +4604,31 @@ async function startServer() {
             lead: { tenantId: actor.tenantId },
           },
         });
-        approvalsYesterday = await prisma.interaction.count({
+        approvalsYesterday = await prisma.lead.count({
           where: {
-            userId: req.user.id,
-            type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
-            outcome: 'AGREED',
-            date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
-            lead: { tenantId: actor.tenantId },
-          },
+            tenantId: actor.tenantId,
+            status: 'AGREED',
+            interactions: {
+              some: {
+                userId: req.user.id,
+                type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
+                date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
+              }
+            }
+          }
         });
-        interestedYesterday = await prisma.interaction.count({
+        interestedYesterday = await prisma.lead.count({
           where: {
-            userId: req.user.id,
-            type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
-            outcome: 'INTERESTED',
-            date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
-            lead: { tenantId: actor.tenantId },
-          },
+            tenantId: actor.tenantId,
+            status: 'INTERESTED',
+            interactions: {
+              some: {
+                userId: req.user.id,
+                type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
+                date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
+              }
+            }
+          }
         });
       } else if (actor.role === 'TEAM_LEAD') {
         const teamMembers = await prisma.user.findMany({
@@ -4656,22 +4683,32 @@ async function startServer() {
             })
           : 0;
         approvalsYesterday = salesIds.length
-          ? await prisma.interaction.count({
+          ? await prisma.lead.count({
               where: {
-                userId: { in: salesIds },
-                type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
-                outcome: 'AGREED',
-                date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
+                tenantId: actor.tenantId,
+                status: 'AGREED',
+                interactions: {
+                  some: {
+                    userId: { in: salesIds },
+                    type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
+                    date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
+                  }
+                }
               },
             })
           : 0;
         interestedYesterday = salesIds.length
-          ? await prisma.interaction.count({
+          ? await prisma.lead.count({
               where: {
-                userId: { in: salesIds },
-                type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
-                outcome: 'INTERESTED',
-                date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
+                tenantId: actor.tenantId,
+                status: 'INTERESTED',
+                interactions: {
+                  some: {
+                    userId: { in: salesIds },
+                    type: { in: TARGET_PROGRESS_INTERACTION_TYPES },
+                    date: { gte: yesterdayRange.start, lt: yesterdayRange.end },
+                  }
+                }
               },
             })
           : 0;
