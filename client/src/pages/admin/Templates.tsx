@@ -29,8 +29,17 @@ export default function Templates() {
       const response = await api.get('/templates');
       const items = response.data || [];
       setTemplates(items);
-      setDrafts(items.reduce((acc: Record<number, string>, item: Template) => ({ ...acc, [item.id]: item.content }), {}));
-      setScopeByTemplate(items.reduce((acc: Record<number, 'USER' | 'TENANT'>, item: Template) => ({ ...acc, [item.id]: item.scope === 'TENANT' ? 'TENANT' : 'USER' }), {}));
+      
+      const newDrafts: Record<number, string> = {};
+      const newScopes: Record<number, 'USER' | 'TENANT'> = {};
+      
+      items.forEach((item: Template) => {
+        newDrafts[item.id] = item.content;
+        newScopes[item.id] = item.scope === 'TENANT' ? 'TENANT' : 'USER';
+      });
+      
+      setDrafts(newDrafts);
+      setScopeByTemplate(newScopes);
     } catch (err) {
       setError('فشل في جلب القوالب');
     } finally {

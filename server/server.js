@@ -7105,48 +7105,42 @@ async function startServer() {
       if (actorTenantError) {
         return res.status(400).json({ error: actorTenantError });
       }
-      await Promise.all(
-        DEFAULT_TEMPLATES.map((template) =>
-          prisma.messageTemplate.upsert({
-            where: { tenantId_status: { tenantId: actor.tenantId, status: template.status } },
-            update: { content: ensureTemplateNominationIntro(template.content) },
-            create: {
-              ...template,
-              content: ensureTemplateNominationIntro(template.content),
-              tenantId: actor.tenantId,
-            },
-          }),
-        ),
-      );
+
+      // Check if templates exist for this tenant, if not, seed from defaults
+      const existingCount = await prisma.messageTemplate.count({
+        where: { tenantId: actor.tenantId }
+      });
+
+      if (existingCount === 0) {
+        await Promise.all(
+          DEFAULT_TEMPLATES.map((template) =>
+            prisma.messageTemplate.create({
+              data: {
+                ...template,
+                content: ensureTemplateNominationIntro(template.content),
+                tenantId: actor.tenantId,
+              },
+            }),
+          ),
+        );
+      }
+
       const templates = await prisma.messageTemplate.findMany({
         where: { tenantId: actor.tenantId },
         orderBy: { id: 'asc' },
       });
-      await Promise.all(
-        templates.map((template) => {
-          const normalized = ensureTemplateNominationIntro(template.content);
-          if (normalized === template.content) return Promise.resolve(null);
-          return prisma.messageTemplate.update({
-            where: { id: template.id },
-            data: { content: normalized },
-          });
-        }),
-      );
-      const normalizedTemplates = templates.map((template) => ({
-        ...template,
-        content: ensureTemplateNominationIntro(template.content),
-      }));
+
       const bucket = readAssistantTraining();
       const tenantKey = String(actor.tenantId);
       const tenantBucket = bucket[tenantKey] || {};
       const userOverrides = tenantBucket?.templates?.users?.[String(actor.id)] || {};
-      const response = normalizedTemplates.map((template) => {
+
+      const response = templates.map((template) => {
         const override = userOverrides?.[template.status];
         if (typeof override === 'string' && override.trim()) {
           return { ...template, content: ensureTemplateNominationIntro(override), scope: 'USER' };
         }
-        const normalizedTemplateContent = ensureTemplateNominationIntro(template.content);
-        return { ...template, content: normalizedTemplateContent, scope: 'TENANT' };
+        return { ...template, content: ensureTemplateNominationIntro(template.content), scope: 'TENANT' };
       });
       res.json(response);
     } catch (error) {
