@@ -9,8 +9,10 @@ import {
   MessageCircle,
   Crown,
   Edit,
-  Trash2
+  Trash2,
+  Download
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import clsx from 'clsx';
 import EditLeadModal from '../components/EditLeadModal';
 import { toWhatsAppNumber } from '../utils/whatsapp';
@@ -169,6 +171,32 @@ export default function Leads() {
     }
   };
 
+  const exportToExcel = () => {
+    const data = filteredLeads.map(lead => ({
+      'الاسم': lead.name,
+      'رقم الهاتف': lead.phone,
+      'رقم الواتساب': lead.whatsappPhone || '-',
+      'النوع': lead.gender === 'MALE' ? 'ذكر' : lead.gender === 'FEMALE' ? 'أنثى' : 'غير محدد',
+      'الحالة': getStatusLabel(lead.status),
+      'المصدر': lead.source === 'CALL' ? 'مكالمة' : lead.source === 'SEND' ? 'إرسال' : 'غير معروف',
+      'الموظف': lead.agent?.name || '-',
+      'تاريخ الإضافة': new Date(lead.createdAt).toLocaleDateString('ar-EG'),
+      'آخر مكالمة': formatCairoDateTime(lead.lastInteractionAt),
+      'الملاحظات': lead.notes || '-',
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'العملاء');
+
+    // Generate filename based on current filter
+    const statusLabel = filterStatus === 'ALL' ? 'كل العملاء' : getStatusLabel(filterStatus);
+    const dateStr = new Date().toLocaleDateString('en-GB').replace(/\//g, '-');
+    const filename = `عملاء_${statusLabel}_${dateStr}.xlsx`;
+
+    XLSX.writeFile(workbook, filename);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -176,13 +204,22 @@ export default function Leads() {
           <h2 className="text-3xl font-bold text-slate-800">إدارة العملاء</h2>
           <p className="text-slate-600">قائمة بجميع العملاء المحتملين والحاليين</p>
         </div>
-        <Link 
-          to="/leads/new" 
-          className="btn-primary flex items-center gap-2"
-        >
-          <Plus size={20} />
-          <span>إضافة عميل جديد</span>
-        </Link>
+        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+          <button 
+            onClick={exportToExcel}
+            className="flex-1 md:flex-none px-5 py-2.5 rounded-xl bg-emerald-600 text-white font-black hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200 flex items-center justify-center gap-2 border-2 border-emerald-500"
+          >
+            <Download size={20} />
+            <span>تصدير لإكسيل (XLSX)</span>
+          </button>
+          <Link 
+            to="/leads/new" 
+            className="flex-1 md:flex-none btn-primary flex items-center justify-center gap-2 px-5 py-2.5 shadow-lg shadow-blue-200"
+          >
+            <Plus size={20} />
+            <span>إضافة عميل جديد</span>
+          </Link>
+        </div>
       </div>
 
       <div className="glass-card p-4 flex flex-col md:flex-row gap-4 items-center">
